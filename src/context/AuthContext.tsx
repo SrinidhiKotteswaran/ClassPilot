@@ -70,10 +70,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signUp(email: string, password: string, username: string) {
     if (DEMO_MODE || !supabase) return;
+
+    // Always send production users back to the deployed app after confirmation.
+    // Using the current origin prevents Supabase's default localhost Site URL from
+    // being embedded in confirmation emails generated from the production app.
+    const redirectTo = typeof window !== 'undefined'
+      ? window.location.origin
+      : 'https://class-pilot-sigma.vercel.app';
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { username } },
+      options: {
+        data: { username },
+        emailRedirectTo: redirectTo,
+      },
     });
     if (error) throw error;
     if (data.session && data.user) {
