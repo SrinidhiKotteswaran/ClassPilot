@@ -20,6 +20,7 @@ export interface SyncResult {
   assignmentsUpdated: number;
   errors: string[];
   message?: string;
+  setupRequired?: boolean;
 }
 
 export async function getConnection(): Promise<SchoolConnection | null> {
@@ -52,7 +53,7 @@ export async function triggerSync(): Promise<SyncResult> {
     body: { action: 'sync' },
   });
   if (error) throw new Error(error.message || 'Schoology sync failed.');
-  if (data?.error) throw new Error(data.error);
+  if (data?.error && !data?.setupRequired) throw new Error(data.error);
   return data as SyncResult;
 }
 
