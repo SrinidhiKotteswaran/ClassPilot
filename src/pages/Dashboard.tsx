@@ -73,13 +73,14 @@ export function Dashboard({ onNavigate }: { onNavigate: (r: Route) => void }) {
   }
 
   const top = ranked[0];
+  const firstName = profile?.username?.trim().split(/\s+/)[0] || 'there';
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl font-bold text-slate-900">
-            {greeting()}, {profile?.username?.split(' ')[0] || 'there'}
+            {greeting()}, {firstName}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {ranked.length === 0
