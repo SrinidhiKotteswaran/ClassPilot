@@ -8,6 +8,7 @@ interface AuthState {
   profile: Profile | null;
   loading: boolean;
   signUp: (email: string, password: string, username: string) => Promise<void>;
+  resendConfirmation: (email: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -43,7 +44,8 @@ const demoSession = {
 
 async function loadProfile(userId: string): Promise<Profile | null> {
   if (DEMO_MODE || !supabase) return getDemoProfile();
-  const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+  const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+  if (error) throw error;
   return data;
 }
 
@@ -58,38 +60,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
-      if (data.session) loadProfile(data.session.user.id).then((p) => { setProfile(p); setLoading(false); });
-      else setLoading(false);
-    });
+      if (data.session) {
+        loadProfile(data.session.user.id)
+          .then(setProfile)
+          .catch(() => setProfile(null))
+          .finally(() => setLoading(false));
+      } else setLoading(false);
+    }).catch(() => setLoading(false));
+
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
-      (async () => { setProfile(next ? await loadProfile(next.user.id) : null); setLoading(false); })();
+      (async () => {
+        try { setProfile(next ? await loadProfile(next.user.id) : null); }
+        catch { setProfile(null); }
+        finally { setLoading(false); }
+      })();
     });
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  function redirectUrl() {
+    return typeof window !== 'undefined' ? window.location.origin : 'https://class-pilot-sigma.vercel.app';
+  }
+
   async function signUp(email: string, password: string, username: string) {
     if (DEMO_MODE || !supabase) return;
-
-    // Always send production users back to the deployed app after confirmation.
-    // Using the current origin prevents Supabase's default localhost Site URL from
-    // being embedded in confirmation emails generated from the production app.
-    const redirectTo = typeof window !== 'undefined'
-      ? window.location.origin
-      : 'https://class-pilot-sigma.vercel.app';
-
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: { username },
-        emailRedirectTo: redirectTo,
-      },
+      options: { data: { username }, emailRedirectTo: redirectUrl() },
     });
     if (error) throw error;
-    if (data.session && data.user) {
-      setProfile(await loadProfile(data.user.id));
-    }
+    if (data.session && data.user) setProfile(await loadProfile(data.user.id));
+  }
+
+  async function resendConfirmation(email: string) {
+    if (DEMO_MODE || !supabase) return;
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: { emailRedirectTo: redirectUrl() },
+    });
+    if (error) throw error;
   }
 
   async function signIn(email: string, password: string) {
@@ -102,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function refreshProfile() { if (session) setProfile(await loadProfile(session.user.id)); }
 
-  return <AuthContext.Provider value={{ session, profile, loading, signUp, signIn, signOut, refreshProfile }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ session, profile, loading, signUp, resendConfirmation, signIn, signOut, refreshProfile }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth(): AuthState {
