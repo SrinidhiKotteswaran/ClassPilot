@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import type { Session } from '@supabase/supabase-js';
+import type { Session, User } from '@supabase/supabase-js';
 import { DEMO_MODE, supabase } from '@/lib/supabase';
 import type { Profile } from '@/types';
 
@@ -42,11 +42,23 @@ const demoSession = {
   user: { id: 'demo-user', aud: 'authenticated', role: 'authenticated', email: 'student@example.com', app_metadata: {}, user_metadata: {}, created_at: new Date().toISOString() },
 } as unknown as Session;
 
-async function loadProfile(userId: string): Promise<Profile | null> {
-  if (DEMO_MODE || !supabase) return getDemoProfile();
-  const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+async function ensureProfile(user: User, preferredUsername?: string | null): Promise<Profile> {
+  const fallbackName = preferredUsername?.trim() || user.user_metadata?.username?.trim() || user.email?.split('@')[0] || 'Student';
+  const { data, error } = await supabase!
+    .from('profiles')
+    .upsert({ id: user.id, username: fallbackName }, { onConflict: 'id' })
+    .select('*')
+    .single();
   if (error) throw error;
-  return data;
+  return data as Profile;
+}
+
+async function loadProfile(user: User): Promise<Profile | null> {
+  if (DEMO_MODE || !supabase) return getDemoProfile();
+  const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
+  if (error) throw error;
+  if (data) return data as Profile;
+  return ensureProfile(user);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -58,23 +70,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (DEMO_MODE || !supabase) {
       setSession(demoSession); setProfile(getDemoProfile()); setLoading(false); return;
     }
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(async ({ data }) => {
       setSession(data.session);
       if (data.session) {
-        loadProfile(data.session.user.id)
-          .then(setProfile)
-          .catch(() => setProfile(null))
-          .finally(() => setLoading(false));
-      } else setLoading(false);
+        try { setProfile(await loadProfile(data.session.user)); }
+        catch { setProfile(null); }
+      }
+      setLoading(false);
     }).catch(() => setLoading(false));
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
-      (async () => {
-        try { setProfile(next ? await loadProfile(next.user.id) : null); }
-        catch { setProfile(null); }
-        finally { setLoading(false); }
-      })();
+      if (!next) {
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
+      // Keep database work outside the auth callback to avoid auth-lock deadlocks.
+      setTimeout(() => {
+        loadProfile(next.user)
+          .then(setProfile)
+          .catch(() => setProfile(null))
+          .finally(() => setLoading(false));
+      }, 0);
     });
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -91,7 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       options: { data: { username }, emailRedirectTo: redirectUrl() },
     });
     if (error) throw error;
-    if (data.session && data.user) setProfile(await loadProfile(data.user.id));
+    if (data.session && data.user) setProfile(await ensureProfile(data.user, username));
   }
 
   async function resendConfirmation(email: string) {
@@ -112,7 +130,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signOut() { if (!DEMO_MODE && supabase) await supabase.auth.signOut(); }
 
-  async function refreshProfile() { if (session) setProfile(await loadProfile(session.user.id)); }
+  async function refreshProfile() {
+    if (!session || !supabase) return;
+    setProfile(await loadProfile(session.user));
+  }
 
   return <AuthContext.Provider value={{ session, profile, loading, signUp, resendConfirmation, signIn, signOut, refreshProfile }}>{children}</AuthContext.Provider>;
 }
