@@ -4,7 +4,7 @@ import type { Category } from '@/types';
 export interface SchoolConnection {
   id: string;
   user_id: string;
-  status: 'disconnected' | 'pending' | 'connected' | 'error' | 'syncing';
+  status: 'disconnected' | 'connected' | 'error' | 'syncing';
   status_message: string;
   schoology_user_id: string | null;
   schoology_username: string | null;
@@ -20,10 +20,10 @@ export interface SyncResult {
   assignmentsUpdated: number;
   errors: string[];
   message?: string;
-  setupRequired?: boolean;
 }
 
-const OAUTH_FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/schoology-oauth`;
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+const IMPORT_CODE_FUNCTION = `${SUPABASE_URL}/functions/v1/schoology-import-code`;
 
 export async function getConnection(): Promise<SchoolConnection | null> {
   if (DEMO_MODE || !supabase) return null;
@@ -43,32 +43,21 @@ export async function disconnect(): Promise<void> {
   if (error) throw error;
 }
 
-export async function startSchoologyOAuth(): Promise<{ authorizeUrl: string }> {
+export async function createSchoologyImportCode(): Promise<{ code: string; expiresAt: string }> {
   if (DEMO_MODE || !supabase) throw new Error('Supabase is not configured for this deployment.');
   const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error('You must be signed in to connect Schoology.');
-  const response = await fetch(OAUTH_FUNCTION_URL, {
+  if (!session) throw new Error('You must be signed in.');
+  const response = await fetch(IMPORT_CODE_FUNCTION, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${session.access_token}`,
       apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ action: 'start' }),
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data?.message || data?.error || 'Could not start Schoology connection.');
-  return data as { authorizeUrl: string };
-}
-
-export async function triggerSync(): Promise<SyncResult> {
-  if (DEMO_MODE || !supabase) throw new Error('Supabase is not configured for this deployment.');
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error('You must be signed in to sync Schoology.');
-  const { data, error } = await supabase.functions.invoke('schoology-sync-v2', { body: { action: 'sync' } });
-  if (error) throw new Error(error.message || 'Schoology sync failed.');
-  if (data?.error && !data?.setupRequired) throw new Error(data.error);
-  return data as SyncResult;
+  if (!response.ok) throw new Error(data?.error || 'Could not create an import code.');
+  return data as { code: string; expiresAt: string };
 }
 
 export function mapSchoologyCategory(raw: string | null | undefined): Category {
