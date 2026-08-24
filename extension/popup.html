@@ -1,1 +1,12 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ClassPilot Importer</title><link rel="stylesheet" href="popup.css"></head><body><main><div class="brand">ClassPilot</div><h1>Schoology Importer</h1><p id="status">Prepare an export from an open Schoology tab first.</p><div id="counts" class="counts hidden"></div><button id="import">Export for ClassPilot</button><div id="message" class="message"></div><p class="note">The extension saves the prepared course and assignment data as a local JSON file. You choose when to upload it to ClassPilot.</p></main><script src="popup.js"></script></body></html>
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ClassPilot Schoology Sync</title><link rel="stylesheet" href="popup.css"></head>
+<body><main>
+  <div class="brand"><span class="logo">C</span><div><strong>ClassPilot</strong><small>Schoology Sync</small></div></div>
+  <h1>Connect Schoology</h1>
+  <p id="status">Connect your ClassPilot account once. After that, ClassPilot will keep your Schoology data synced while the extension is active.</p>
+  <div id="counts" class="counts hidden"></div>
+  <button id="connect">Connect to ClassPilot</button>
+  <button id="sync" class="secondary">Sync Schoology now</button>
+  <div id="message" class="message"></div>
+  <p class="privacy">Your Schoology password is never read or stored by ClassPilot. Google/Schoology login stays in your normal browser session.</p>
+</main><script src="popup.js"></script></body></html>
