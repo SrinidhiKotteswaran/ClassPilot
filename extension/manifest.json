@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "ClassPilot Schoology Importer",
+  "version": "0.1.0",
+  "description": "Import the Schoology classes and assignments you choose into ClassPilot.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://*.schoology.com/*", "https://schoology.com/*"],
+  "action": { "default_title": "ClassPilot Schoology Importer", "default_popup": "popup.html" },
+  "content_scripts": [{
+    "matches": ["https://*.schoology.com/*", "https://schoology.com/*"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }]
+}
