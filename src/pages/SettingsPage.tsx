@@ -8,10 +8,13 @@ import {
   AlertCircle,
   Clock,
   Loader2,
+  User,
+  Mail,
 } from 'lucide-react';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Feedback';
+import { useAuth } from '@/context/AuthContext';
 import {
   getConnection,
   triggerSync,
@@ -21,6 +24,7 @@ import {
 } from '@/services/schoology';
 
 export function SettingsPage() {
+  const { session, profile } = useAuth();
   const [conn, setConn] = useState<SchoolConnection | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -75,13 +79,36 @@ export function SettingsPage() {
   const isConnected = conn?.status === 'connected';
   const isPending = conn?.status === 'pending';
   const isError = conn?.status === 'error';
+  const setupRequired = syncResult?.setupRequired;
+  const displayName = profile?.username || session?.user.user_metadata?.username || 'Student';
+  const email = session?.user.email || '—';
 
   return (
     <div className="space-y-5">
       <div>
         <h1 className="font-display text-2xl font-bold text-slate-900">Settings</h1>
-        <p className="mt-1 text-sm text-slate-500">Manage your school platform connection and preferences.</p>
+        <p className="mt-1 text-sm text-slate-500">Manage your account, school connection, and preferences.</p>
       </div>
+
+      <Card>
+        <CardHeader title="Account details" subtitle="Your ClassPilot account information" />
+        <div className="grid gap-3 p-5 sm:grid-cols-2">
+          <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-4">
+            <User className="h-5 w-5 shrink-0 text-slate-400" />
+            <div className="min-w-0">
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Name</div>
+              <div className="truncate text-sm font-medium text-slate-900">{displayName}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-4">
+            <Mail className="h-5 w-5 shrink-0 text-slate-400" />
+            <div className="min-w-0">
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-400">Email</div>
+              <div className="truncate text-sm font-medium text-slate-900">{email}</div>
+            </div>
+          </div>
+        </div>
+      </Card>
 
       <Card>
         <CardHeader
@@ -89,21 +116,14 @@ export function SettingsPage() {
           subtitle="Automatically import your courses, assignments, and grades"
         />
         <div className="p-5">
-          {/* Status banner */}
           <div
             className={`mb-4 flex items-start gap-3 rounded-xl p-4 ${
-              isConnected
-                ? 'bg-brand-50'
-                : isError
-                  ? 'bg-rose-50'
-                  : isPending
-                    ? 'bg-amber-50'
-                    : 'bg-slate-50'
+              isConnected ? 'bg-brand-50' : isError || setupRequired ? 'bg-rose-50' : isPending ? 'bg-amber-50' : 'bg-slate-50'
             }`}
           >
             {isConnected ? (
               <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />
-            ) : isError ? (
+            ) : isError || setupRequired ? (
               <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-rose-600" />
             ) : isPending ? (
               <Clock className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
@@ -112,57 +132,41 @@ export function SettingsPage() {
             )}
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold text-slate-900">
-                {isConnected
-                  ? 'Schoology is connected'
-                  : isPending
-                    ? 'Connection in progress'
-                    : isError
-                      ? 'Connection issue'
-                      : 'Not connected'}
+                {isConnected ? 'Schoology is connected' : isPending ? 'Connection in progress' : isError || setupRequired ? 'Schoology setup required' : 'Not connected'}
               </div>
               <p className="mt-0.5 text-sm text-slate-600">
                 {isConnected && conn?.schoology_username && `Signed in as ${conn.schoology_username}`}
                 {isConnected && conn?.school_name && ` · ${conn.school_name}`}
                 {isPending && conn?.status_message}
                 {isError && conn?.status_message}
-                {!isConnected && !isPending && !isError &&
-                  'Connect your Schoology account to automatically sync courses, assignments, and grades.'}
+                {setupRequired && 'The app is ready, but Schoology administrator API credentials have not been added to the server yet.'}
+                {!isConnected && !isPending && !isError && !setupRequired && 'Connect your Schoology account to automatically sync courses, assignments, and grades.'}
               </p>
               {isConnected && conn?.last_synced_at && (
-                <p className="mt-1 text-xs text-slate-400">
-                  Last synced {new Date(conn.last_synced_at).toLocaleString()}
-                </p>
+                <p className="mt-1 text-xs text-slate-400">Last synced {new Date(conn.last_synced_at).toLocaleString()}</p>
               )}
             </div>
           </div>
 
-          {/* Sync result */}
-          {syncResult && (
+          {syncResult && !setupRequired && (
             <div className="mb-4 rounded-xl bg-slate-50 p-4 text-sm">
               <div className="font-medium text-slate-900">Sync complete</div>
               <ul className="mt-2 space-y-1 text-slate-600">
                 <li>{syncResult.classesImported} classes synced</li>
                 <li>{syncResult.assignmentsImported} new assignments imported</li>
                 <li>{syncResult.assignmentsUpdated} assignments updated</li>
-                {syncResult.errors.length > 0 && (
-                  <li className="text-rose-600">{syncResult.errors.length} errors (some items may not have synced)</li>
-                )}
+                {syncResult.errors.length > 0 && <li className="text-rose-600">{syncResult.errors.length} errors (some items may not have synced)</li>}
               </ul>
             </div>
           )}
 
-          {error && (
-            <div className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-100">
-              {error}
-            </div>
-          )}
+          {error && <div className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-100">{error}</div>}
 
-          {/* Actions */}
           <div className="flex flex-wrap gap-2">
             {!isConnected ? (
-              <Button onClick={handleSync} disabled={syncing}>
+              <Button onClick={handleSync} disabled={syncing || setupRequired}>
                 {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
-                {syncing ? 'Connecting...' : 'Connect & sync'}
+                {setupRequired ? 'Waiting for Schoology setup' : syncing ? 'Connecting...' : 'Connect & sync'}
               </Button>
             ) : (
               <>
@@ -179,9 +183,7 @@ export function SettingsPage() {
           </div>
 
           <p className="mt-4 text-xs text-slate-400">
-            Schoology integration requires API credentials configured by an administrator.
-            The connection architecture is fully built — when credentials are added, your
-            courses, assignments, categories, and grades will sync automatically.
+            Schoology uses administrator-provisioned API credentials. They stay on the server and are never exposed to your browser.
           </p>
         </div>
       </Card>
