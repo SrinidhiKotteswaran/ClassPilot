@@ -43,7 +43,8 @@ const demoSession = {
 } as unknown as Session;
 
 async function ensureProfile(user: User, preferredUsername?: string | null): Promise<Profile> {
-  const fallbackName = preferredUsername?.trim() || user.user_metadata?.username?.trim() || user.email?.split('@')[0] || 'Student';
+  const metadataName = typeof user.user_metadata?.username === 'string' ? user.user_metadata.username.trim() : '';
+  const fallbackName = preferredUsername?.trim() || metadataName || user.email?.split('@')[0] || 'Student';
   const { data, error } = await supabase!
     .from('profiles')
     .upsert({ id: user.id, username: fallbackName }, { onConflict: 'id' })
@@ -57,7 +58,17 @@ async function loadProfile(user: User): Promise<Profile | null> {
   if (DEMO_MODE || !supabase) return getDemoProfile();
   const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
   if (error) throw error;
-  if (data) return data as Profile;
+
+  // The name entered at signup lives in Supabase Auth metadata. Keep the profile
+  // synchronized with it so an email-derived fallback (e.g. "name12") never
+  // replaces the user's actual name in the UI.
+  const metadataName = typeof user.user_metadata?.username === 'string' ? user.user_metadata.username.trim() : '';
+  if (data) {
+    if (metadataName && data.username !== metadataName) {
+      return ensureProfile(user, metadataName);
+    }
+    return data as Profile;
+  }
   return ensureProfile(user);
 }
 
@@ -86,7 +97,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false);
         return;
       }
-      // Keep database work outside the auth callback to avoid auth-lock deadlocks.
       setTimeout(() => {
         loadProfile(next.user)
           .then(setProfile)
