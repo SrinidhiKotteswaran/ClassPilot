@@ -1,19 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
-import { GraduationCap, Unlink, CheckCircle2, AlertCircle, Loader2, User, Mail, Copy, Chrome } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { GraduationCap, Unlink, CheckCircle2, AlertCircle, Loader2, User, Mail, Upload, Chrome } from 'lucide-react';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Feedback';
 import { useAuth } from '@/context/AuthContext';
-import { createSchoologyImportCode, getConnection, disconnect, type SchoolConnection } from '@/services/schoology';
+import { getConnection, disconnect, importSchoologyPayload, type SchoolConnection, type SchoologyImportPayload } from '@/services/schoology';
 
 export function SettingsPage() {
   const { session, profile } = useAuth();
   const [conn, setConn] = useState<SchoolConnection | null>(null);
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [code, setCode] = useState<string | null>(null);
-  const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -22,14 +22,19 @@ export function SettingsPage() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  async function handleCreateCode() {
-    setCreating(true); setError(null);
-    try { const result = await createSchoologyImportCode(); setCode(result.code); setExpiresAt(result.expiresAt); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not create an import code.'); }
-    finally { setCreating(false); }
+  async function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]; if (!file) return;
+    setImporting(true); setError(null); setMessage(null);
+    try {
+      const payload = JSON.parse(await file.text()) as SchoologyImportPayload;
+      const result = await importSchoologyPayload(payload);
+      setMessage(`Imported ${result.classesImported} classes and ${result.assignmentsImported + result.assignmentsUpdated} assignments.`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not import the Schoology file.'); }
+    finally { setImporting(false); event.target.value = ''; }
   }
-  async function handleCopy() { if (code) await navigator.clipboard.writeText(code); }
-  async function handleDisconnect() { try { await disconnect(); setCode(null); await load(); } catch (e) { setError(e instanceof Error ? e.message : 'Could not disconnect.'); } }
+
+  async function handleDisconnect() { try { await disconnect(); await load(); } catch (e) { setError(e instanceof Error ? e.message : 'Could not disconnect.'); } }
 
   if (loading) return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
   const isConnected = conn?.status === 'connected';
@@ -46,14 +51,16 @@ export function SettingsPage() {
     <Card><CardHeader title="Schoology connection" subtitle="Import your classes and assignments from Schoology" /><div className="p-5">
       <div className={`mb-4 flex items-start gap-3 rounded-xl p-4 ${isConnected ? 'bg-brand-50' : isError ? 'bg-rose-50' : 'bg-slate-50'}`}>
         {isConnected ? <CheckCircle2 className="mt-0.5 h-5 w-5 text-brand-600" /> : isError ? <AlertCircle className="mt-0.5 h-5 w-5 text-rose-600" /> : <GraduationCap className="mt-0.5 h-5 w-5 text-slate-400" />}
-        <div><div className="text-sm font-semibold text-slate-900">{isConnected ? 'Schoology is connected' : isError ? 'Schoology connection issue' : 'Connect Schoology'}</div><p className="mt-0.5 text-sm text-slate-600">{isConnected ? 'Your latest import is connected.' : isError ? conn?.status_message : 'Use the ClassPilot browser extension while you are signed into Schoology.'}</p>{isConnected && conn?.last_synced_at && <p className="mt-1 text-xs text-slate-400">Last imported {new Date(conn.last_synced_at).toLocaleString()}</p>}</div>
+        <div><div className="text-sm font-semibold text-slate-900">{isConnected ? 'Schoology is connected' : isError ? 'Schoology connection issue' : 'Connect Schoology'}</div><p className="mt-0.5 text-sm text-slate-600">{isConnected ? 'Your latest Schoology import is connected.' : isError ? conn?.status_message : 'Use the ClassPilot browser extension while you are signed into Schoology.'}</p>{isConnected && conn?.last_synced_at && <p className="mt-1 text-xs text-slate-400">Last imported {new Date(conn.last_synced_at).toLocaleString()}</p>}</div>
       </div>
       {error && <div className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
-      <div className="rounded-2xl border border-slate-200 p-4"><div className="flex items-start gap-3"><Chrome className="mt-0.5 h-5 w-5 text-slate-500" /><div><div className="font-semibold text-slate-900">ClassPilot Schoology Importer</div><p className="mt-1 text-sm text-slate-500">Open Schoology, sign in normally, and prepare the classes and assignments you want to import.</p></div></div>
-        <ol className="mt-4 space-y-2 text-sm text-slate-600"><li><b>1.</b> Install the extension from the <code>extension/</code> folder.</li><li><b>2.</b> Open Schoology and click <b>Prepare ClassPilot import</b>.</li><li><b>3.</b> Generate a one-time code here and enter it in the extension.</li></ol>
-        <div className="mt-4 flex flex-wrap gap-2"><Button onClick={handleCreateCode} disabled={creating}>{creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <GraduationCap className="h-4 w-4" />}{creating ? 'Creating code...' : 'Generate import code'}</Button>{isConnected && <Button variant="ghost" onClick={handleDisconnect}><Unlink className="h-4 w-4" />Disconnect</Button>}</div>
-        {code && <div className="mt-4 rounded-xl bg-slate-900 p-4 text-white"><div className="text-xs uppercase tracking-wide text-slate-400">One-time import code</div><div className="mt-1 flex items-center gap-2"><code className="text-2xl font-bold tracking-[0.18em]">{code}</code><button aria-label="Copy import code" onClick={handleCopy} className="rounded-lg p-2 text-slate-300 hover:bg-white/10"><Copy className="h-4 w-4" /></button></div><div className="mt-2 text-xs text-slate-400">Expires {expiresAt ? new Date(expiresAt).toLocaleTimeString() : 'soon'} and can only be used once.</div></div>}
+      {message && <div className="mb-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</div>}
+      <div className="rounded-2xl border border-slate-200 p-4"><div className="flex items-start gap-3"><Chrome className="mt-0.5 h-5 w-5 text-slate-500" /><div><div className="font-semibold text-slate-900">ClassPilot Schoology Importer</div><p className="mt-1 text-sm text-slate-500">The extension reads the Schoology pages you open and creates a local JSON export. You choose when to upload that export into ClassPilot.</p></div></div>
+        <ol className="mt-4 space-y-2 text-sm text-slate-600"><li><b>1.</b> Install the extension from the <code>extension/</code> folder.</li><li><b>2.</b> Open Schoology and click <b>Prepare ClassPilot import</b>.</li><li><b>3.</b> Open the extension and click <b>Export for ClassPilot</b>.</li><li><b>4.</b> Upload the downloaded JSON here.</li></ol>
+        <input ref={fileRef} type="file" accept="application/json,.json" onChange={handleFile} className="hidden" />
+        <div className="mt-4 flex flex-wrap gap-2"><Button onClick={() => fileRef.current?.click()} disabled={importing}>{importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}{importing ? 'Importing...' : 'Upload Schoology export'}</Button>{isConnected && <Button variant="ghost" onClick={handleDisconnect}><Unlink className="h-4 w-4" />Disconnect</Button>}</div>
       </div>
+      <p className="mt-4 text-xs text-slate-400">The upload is an explicit action you control; ClassPilot does not receive Schoology login credentials.</p>
     </div></Card>
   </div>;
 }
