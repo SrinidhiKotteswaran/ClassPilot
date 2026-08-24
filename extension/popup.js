@@ -1,35 +1,43 @@
 const statusEl = document.getElementById('status');
 const countsEl = document.getElementById('counts');
-const button = document.getElementById('import');
+const connectButton = document.getElementById('connect');
+const syncButton = document.getElementById('sync');
 const messageEl = document.getElementById('message');
 
-async function loadPending() {
-  const { classPilotPendingImport } = await chrome.storage.local.get('classPilotPendingImport');
-  if (!classPilotPendingImport) return null;
-  statusEl.textContent = 'Schoology data is ready.';
-  countsEl.textContent = `${classPilotPendingImport.courses?.length || 0} classes · ${classPilotPendingImport.assignments?.length || 0} assignments`;
-  countsEl.classList.remove('hidden');
-  return classPilotPendingImport;
+async function refresh() {
+  const state = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
+  if (state?.connected) {
+    statusEl.textContent = 'Connected to ClassPilot. Schoology can now sync automatically.';
+    connectButton.textContent = 'Connected ✓';
+    connectButton.disabled = true;
+  } else {
+    statusEl.textContent = 'Connect your ClassPilot account once. Then your Schoology data can sync automatically.';
+    connectButton.textContent = 'Connect to ClassPilot';
+    connectButton.disabled = false;
+  }
+  if (state?.lastSync) {
+    countsEl.textContent = `Last sync: ${new Date(state.lastSync).toLocaleString()}`;
+    countsEl.classList.remove('hidden');
+  }
 }
 
-button.addEventListener('click', async () => {
-  messageEl.textContent = '';
-  button.disabled = true;
-  try {
-    const payload = await loadPending();
-    if (!payload) throw new Error('Prepare an import from a Schoology tab first.');
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'classpilot-schoology-import.json';
-    a.click();
-    URL.revokeObjectURL(url);
-    messageEl.className = 'message success';
-    messageEl.textContent = 'Export ready. Upload this file in ClassPilot Settings to import it.';
-  } catch (error) {
-    messageEl.className = 'message error';
-    messageEl.textContent = error instanceof Error ? error.message : 'Could not prepare the export.';
-  } finally { button.disabled = false; }
+connectButton.addEventListener('click', async () => {
+  messageEl.className = 'message';
+  messageEl.textContent = 'Opening ClassPilot securely…';
+  connectButton.disabled = true;
+  const result = await chrome.runtime.sendMessage({ type: 'CONNECT_CLASS_PILOT' });
+  messageEl.className = result?.ok ? 'message success' : 'message error';
+  messageEl.textContent = result?.ok ? 'Connected. You can return to Schoology.' : (result?.message || 'Could not connect.');
+  await refresh();
 });
-loadPending();
+
+syncButton.addEventListener('click', async () => {
+  messageEl.className = 'message';
+  messageEl.textContent = 'Switch to an open Schoology tab to sync.';
+  const result = await chrome.runtime.sendMessage({ type: 'SYNC_ACTIVE_SCHOOLOGY' });
+  if (!result?.ok) { messageEl.className = 'message error'; messageEl.textContent = result?.message || 'Could not sync Schoology.'; }
+  else { messageEl.className = 'message success'; messageEl.textContent = result.message || 'Sync started.'; }
+  await refresh();
+});
+
+refresh();
