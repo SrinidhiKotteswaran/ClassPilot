@@ -1,10 +1,10 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, DEMO_MODE } from '@/lib/supabase';
 import type { Category } from '@/types';
 
 export interface SchoolConnection {
   id: string;
   user_id: string;
-  status: 'disconnected' | 'pending' | 'connected' | 'error';
+  status: 'disconnected' | 'pending' | 'connected' | 'error' | 'syncing';
   status_message: string;
   schoology_user_id: string | null;
   schoology_username: string | null;
@@ -19,62 +19,43 @@ export interface SyncResult {
   assignmentsImported: number;
   assignmentsUpdated: number;
   errors: string[];
+  message?: string;
 }
 
 export async function getConnection(): Promise<SchoolConnection | null> {
+  if (DEMO_MODE || !supabase) return null;
   const { data, error } = await supabase.from('school_connections').select('*').maybeSingle();
   if (error) throw error;
   return data;
 }
 
-export async function upsertConnection(input: Partial<SchoolConnection>): Promise<void> {
-  const { error } = await supabase.from('school_connections').upsert(input, { onConflict: 'user_id' });
-  if (error) throw error;
-}
-
 export async function disconnect(): Promise<void> {
+  if (DEMO_MODE || !supabase) return;
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('You must be signed in.');
   const { error } = await supabase
     .from('school_connections')
     .update({ status: 'disconnected', status_message: '', schoology_user_id: null, schoology_username: null, updated_at: new Date().toISOString() })
-    .eq('user_id', (await supabase.auth.getUser()).data.user?.id ?? '');
+    .eq('user_id', user.id);
   if (error) throw error;
 }
 
-/**
- * Triggers a Schoology sync by calling the server-side edge function. The edge
- * function holds the Schoology API credentials and performs the actual API
- * calls — the client never sees Schoology secrets.
- */
+/** Calls the server-side Schoology sync function. Schoology secrets never reach the browser. */
 export async function triggerSync(): Promise<SyncResult> {
-  const { data: session } = await supabase.auth.getSession();
-  const token = session.session?.access_token;
-  if (!token) throw new Error('You must be signed in to sync.');
-
-  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/schoology-sync`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-    },
-    body: JSON.stringify({ action: 'sync' }),
-  });
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `Sync failed (${res.status})`);
+  if (DEMO_MODE || !supabase) {
+    throw new Error('Supabase is not configured for this deployment.');
   }
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error('You must be signed in to connect Schoology.');
 
-  const body = await res.json();
-  if (body.error) throw new Error(body.error);
-  return body as SyncResult;
+  const { data, error } = await supabase.functions.invoke('schoology-sync', {
+    body: { action: 'sync' },
+  });
+  if (error) throw new Error(error.message || 'Schoology sync failed.');
+  if (data?.error) throw new Error(data.error);
+  return data as SyncResult;
 }
 
-/**
- * Maps a Schoology category string to Academic Compass's internal category
- * system. Used by the sync edge function and available here for previewing.
- */
 export function mapSchoologyCategory(raw: string | null | undefined): Category {
   if (!raw) return 'preparatory';
   const lower = raw.toLowerCase();
