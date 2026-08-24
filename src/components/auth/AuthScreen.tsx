@@ -4,8 +4,32 @@ import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/Field';
 
+function friendlyAuthError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : 'Something went wrong.';
+  const lower = msg.toLowerCase();
+  if (lower.includes('rate limit') || lower.includes('over_email_send_rate_limit')) {
+    return 'Too many confirmation emails were requested. Please wait a little before trying again.';
+  }
+  if (lower.includes('already registered') || lower.includes('already been registered')) {
+    return 'That email is already registered. Try signing in instead.';
+  }
+  if (lower.includes('invalid login') || lower.includes('invalid credentials')) {
+    return 'Incorrect email or password.';
+  }
+  if (lower.includes('email not confirmed')) {
+    return 'Please confirm your email first, then sign in.';
+  }
+  if (lower.includes('password') && (lower.includes('weak') || lower.includes('short'))) {
+    return 'Please choose a stronger password.';
+  }
+  if (lower.includes('network') || lower.includes('fetch')) {
+    return 'We could not reach the server. Check your connection and try again.';
+  }
+  return msg;
+}
+
 export function AuthScreen() {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, resendConfirmation } = useAuth();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -13,22 +37,39 @@ export function AuthScreen() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [canResend, setCanResend] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null); setSuccess(null); setBusy(true);
+    if (busy) return;
+    setError(null); setSuccess(null); setBusy(true); setCanResend(false);
     try {
+      const cleanEmail = email.trim().toLowerCase();
       if (mode === 'signup') {
         if (username.trim().length < 2) throw new Error('Please enter a name of at least 2 characters.');
         if (password.length < 6) throw new Error('Password must be at least 6 characters.');
-        await signUp(email.trim(), password, username.trim());
+        await signUp(cleanEmail, password, username.trim());
         setSuccess('Account created. Check your email to confirm your account, then sign in.');
+        setCanResend(true);
       } else {
-        await signIn(email.trim(), password);
+        await signIn(cleanEmail, password);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Something went wrong.';
-      setError(msg.includes('already registered') || msg.includes('already been registered') ? 'That email is already registered. Try signing in.' : msg.includes('Invalid login') ? 'Incorrect email or password.' : msg);
+      const friendly = friendlyAuthError(err);
+      setError(friendly);
+      if (friendly.includes('confirmation emails') || friendly.includes('confirm your email')) setCanResend(true);
+    } finally { setBusy(false); }
+  }
+
+  async function resend() {
+    if (busy || !email.trim()) return;
+    setError(null); setSuccess(null); setBusy(true);
+    try {
+      await resendConfirmation(email.trim().toLowerCase());
+      setSuccess('Confirmation email sent. Check your inbox.');
+      setCanResend(false);
+    } catch (err) {
+      setError(friendlyAuthError(err));
     } finally { setBusy(false); }
   }
 
@@ -50,8 +91,9 @@ export function AuthScreen() {
           {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-100">{error}</div>}
           {success && <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700 ring-1 ring-emerald-100">{success}</div>}
           <Button type="submit" disabled={busy} className="w-full">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{mode === 'signin' ? 'Sign in' : 'Create account'}</Button>
+          {mode === 'signup' && canResend && <button type="button" onClick={resend} disabled={busy} className="w-full text-sm font-medium text-brand-600 hover:text-brand-700 disabled:opacity-50">Resend confirmation email</button>}
         </form>
-        <p className="mt-6 text-center text-sm text-slate-500">{mode === 'signin' ? "Don't have an account?" : 'Already have an account?'}{' '}<button onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); setSuccess(null); }} className="font-medium text-brand-600 hover:text-brand-700">{mode === 'signin' ? 'Sign up' : 'Sign in'}</button></p>
+        <p className="mt-6 text-center text-sm text-slate-500">{mode === 'signin' ? "Don't have an account?" : 'Already have an account?'}{' '}<button type="button" onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); setSuccess(null); setCanResend(false); }} className="font-medium text-brand-600 hover:text-brand-700">{mode === 'signin' ? 'Sign up' : 'Sign in'}</button></p>
       </div></div>
     </div>
   );
