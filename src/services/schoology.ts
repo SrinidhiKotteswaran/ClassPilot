@@ -23,6 +23,8 @@ export interface SyncResult {
   setupRequired?: boolean;
 }
 
+const OAUTH_FUNCTION_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/schoology-oauth`;
+
 export async function getConnection(): Promise<SchoolConnection | null> {
   if (DEMO_MODE || !supabase) return null;
   const { data, error } = await supabase.from('school_connections').select('*').maybeSingle();
@@ -41,17 +43,29 @@ export async function disconnect(): Promise<void> {
   if (error) throw error;
 }
 
-/** Calls the server-side Schoology sync function. Schoology secrets never reach the browser. */
-export async function triggerSync(): Promise<SyncResult> {
-  if (DEMO_MODE || !supabase) {
-    throw new Error('Supabase is not configured for this deployment.');
-  }
+export async function startSchoologyOAuth(): Promise<{ authorizeUrl: string }> {
+  if (DEMO_MODE || !supabase) throw new Error('Supabase is not configured for this deployment.');
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error('You must be signed in to connect Schoology.');
-
-  const { data, error } = await supabase.functions.invoke('schoology-sync', {
-    body: { action: 'sync' },
+  const response = await fetch(OAUTH_FUNCTION_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ action: 'start' }),
   });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || data?.error || 'Could not start Schoology connection.');
+  return data as { authorizeUrl: string };
+}
+
+export async function triggerSync(): Promise<SyncResult> {
+  if (DEMO_MODE || !supabase) throw new Error('Supabase is not configured for this deployment.');
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error('You must be signed in to sync Schoology.');
+  const { data, error } = await supabase.functions.invoke('schoology-sync-v2', { body: { action: 'sync' } });
   if (error) throw new Error(error.message || 'Schoology sync failed.');
   if (data?.error && !data?.setupRequired) throw new Error(data.error);
   return data as SyncResult;
