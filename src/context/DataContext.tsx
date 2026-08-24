@@ -42,6 +42,16 @@ const demoCommitments: Commitment[] = [
 
 function isSameDay(a: Date, b: Date): boolean { return a.toDateString() === b.toDateString(); }
 
+async function seedDemoDataIfNeeded() {
+  if (!DEMO_MODE || typeof window === 'undefined') return;
+  const hasData = window.localStorage.getItem('classpilot.demo.seeded');
+  if (hasData) return;
+  await Promise.all(demoClasses.map((item) => data.createClass(item)));
+  await Promise.all(demoAssignments.map((item) => data.createAssignment(item)));
+  await Promise.all(demoCommitments.map((item) => data.createCommitment(item)));
+  window.localStorage.setItem('classpilot.demo.seeded', '1');
+}
+
 export function DataProvider({ children }: { children: ReactNode }) {
   const { session, profile, refreshProfile } = useAuth();
   const [classes, setClasses] = useState<Class[]>(DEMO_MODE ? demoClasses : []);
@@ -52,16 +62,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const reload = useCallback(async () => {
     if (!session) return;
-    if (DEMO_MODE || !supabase) {
-      setClasses(demoClasses);
-      setAssignments(demoAssignments);
-      setCommitments(demoCommitments);
-      setLoading(false);
-      return;
-    }
     setLoading(true);
     setError(null);
     try {
+      if (DEMO_MODE) await seedDemoDataIfNeeded();
       const [c, a, m] = await Promise.all([data.listClasses(), data.listAssignments(), data.listCommitments()]);
       setClasses(c); setAssignments(a); setCommitments(m);
     } catch (e) {
@@ -72,10 +76,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
   useEffect(() => { if (session) reload(); }, [session, reload]);
 
   const toggleComplete = useCallback(async (a: Assignment) => {
-    if (DEMO_MODE || !supabase) {
-      setAssignments((current) => current.map((item) => item.id === a.id ? { ...item, completed: !item.completed, completed_at: !item.completed ? new Date().toISOString() : null } : item));
-      return;
-    }
     const nowCompleting = !a.completed;
     await data.updateAssignment(a.id, { completed: nowCompleting, completed_at: nowCompleting ? new Date().toISOString() : null, is_missing: nowCompleting ? false : a.is_missing });
     if (nowCompleting && profile) {
@@ -86,7 +86,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
         streak = last && isSameDay(last, yesterday) ? streak + 1 : 1;
       }
-      await supabase.from('profiles').update({ compass_points: profile.compass_points + a.points_value, streak_count: streak, last_completion_date: today.toISOString().slice(0, 10) }).eq('id', profile.id);
+      if (DEMO_MODE || !supabase) {
+        await import('@/context/AuthContext').then(({ updateDemoProfile }) => updateDemoProfile({ compass_points: profile.compass_points + a.points_value, streak_count: streak, last_completion_date: today.toISOString().slice(0, 10) }));
+      } else {
+        await supabase.from('profiles').update({ compass_points: profile.compass_points + a.points_value, streak_count: streak, last_completion_date: today.toISOString().slice(0, 10) }).eq('id', profile.id);
+      }
       await refreshProfile();
     }
     await reload();
