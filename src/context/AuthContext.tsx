@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import { DEMO_MODE, supabase } from '@/lib/supabase';
 import type { Profile } from '@/types';
 
 interface AuthState {
@@ -15,7 +15,35 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
 
+const demoProfile: Profile = {
+  id: 'demo-user',
+  username: 'Student',
+  compass_points: 245,
+  streak_count: 6,
+  last_completion_date: new Date().toISOString().slice(0, 10),
+  announcements_enabled: true,
+  created_at: new Date().toISOString(),
+};
+
+const demoSession = {
+  access_token: 'demo',
+  refresh_token: 'demo',
+  expires_in: 3600,
+  expires_at: Math.floor(Date.now() / 1000) + 3600,
+  token_type: 'bearer',
+  user: {
+    id: 'demo-user',
+    aud: 'authenticated',
+    role: 'authenticated',
+    email: 'student@example.com',
+    app_metadata: {},
+    user_metadata: {},
+    created_at: new Date().toISOString(),
+  },
+} as unknown as Session;
+
 async function loadProfile(userId: string): Promise<Profile | null> {
+  if (DEMO_MODE || !supabase) return demoProfile;
   const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
   return data;
 }
@@ -26,6 +54,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (DEMO_MODE || !supabase) {
+      setSession(demoSession);
+      setProfile(demoProfile);
+      setLoading(false);
+      return;
+    }
+
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       if (data.session) {
@@ -41,11 +76,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
       (async () => {
-        if (next) {
-          setProfile(await loadProfile(next.user.id));
-        } else {
-          setProfile(null);
-        }
+        if (next) setProfile(await loadProfile(next.user.id));
+        else setProfile(null);
       })();
     });
 
@@ -53,24 +85,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function signUp(email: string, password: string, username: string) {
+    if (DEMO_MODE || !supabase) return;
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) throw error;
     const user = data.user;
     if (user) {
-      const { error: pErr } = await supabase
-        .from('profiles')
-        .insert({ id: user.id, username });
+      const { error: pErr } = await supabase.from('profiles').insert({ id: user.id, username });
       if (pErr) throw pErr;
       setProfile(await loadProfile(user.id));
     }
   }
 
   async function signIn(email: string, password: string) {
+    if (DEMO_MODE || !supabase) return;
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
   }
 
   async function signOut() {
+    if (DEMO_MODE || !supabase) return;
     await supabase.auth.signOut();
   }
 
@@ -79,9 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider
-      value={{ session, profile, loading, signUp, signIn, signOut, refreshProfile }}
-    >
+    <AuthContext.Provider value={{ session, profile, loading, signUp, signIn, signOut, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );
