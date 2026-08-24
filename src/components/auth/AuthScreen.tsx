@@ -11,20 +11,24 @@ export function AuthScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null); setBusy(true);
+    setError(null); setSuccess(null); setBusy(true);
     try {
       if (mode === 'signup') {
         if (username.trim().length < 2) throw new Error('Please enter a name of at least 2 characters.');
         if (password.length < 6) throw new Error('Password must be at least 6 characters.');
         await signUp(email.trim(), password, username.trim());
-      } else await signIn(email.trim(), password);
+        setSuccess('Account created. Check your email to confirm your account, then sign in.');
+      } else {
+        await signIn(email.trim(), password);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Something went wrong.';
-      setError(msg.includes('already registered') ? 'That email is already registered. Try signing in.' : msg.includes('Invalid login') ? 'Incorrect email or password.' : msg);
+      setError(msg.includes('already registered') || msg.includes('already been registered') ? 'That email is already registered. Try signing in.' : msg.includes('Invalid login') ? 'Incorrect email or password.' : msg);
     } finally { setBusy(false); }
   }
 
@@ -44,9 +48,10 @@ export function AuthScreen() {
           <Field label="Email"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@school.edu" autoComplete="email" required /></Field>
           <Field label="Password"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} required /></Field>
           {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-100">{error}</div>}
+          {success && <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700 ring-1 ring-emerald-100">{success}</div>}
           <Button type="submit" disabled={busy} className="w-full">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{mode === 'signin' ? 'Sign in' : 'Create account'}</Button>
         </form>
-        <p className="mt-6 text-center text-sm text-slate-500">{mode === 'signin' ? "Don't have an account?" : 'Already have an account?'}{' '}<button onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); }} className="font-medium text-brand-600 hover:text-brand-700">{mode === 'signin' ? 'Sign up' : 'Sign in'}</button></p>
+        <p className="mt-6 text-center text-sm text-slate-500">{mode === 'signin' ? "Don't have an account?" : 'Already have an account?'}{' '}<button onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); setSuccess(null); }} className="font-medium text-brand-600 hover:text-brand-700">{mode === 'signin' ? 'Sign up' : 'Sign in'}</button></p>
       </div></div>
     </div>
   );
