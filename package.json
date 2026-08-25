@@ -2,6 +2,7 @@
   "name": "vite-react-typescript-starter",
   "private": true,
   "version": "0.0.0",
+  "description": "Student-focused academic command center",
   "type": "module",
   "scripts": {
     "dev": "vite",
