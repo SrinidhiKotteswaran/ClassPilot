@@ -58,3 +58,5 @@ supabase/
 - Expand study-plan recommendations
 - Add automated end-to-end browser tests
 - Improve mobile UX and accessibility
+
+<!-- Project documentation note -->
