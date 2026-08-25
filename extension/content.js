@@ -47,17 +47,7 @@
       const parent = a.closest('li, tr, article, .item, .material, .s-ext-list-item') || a.parentElement;
       const nearby = text(parent);
       const dateMatch = nearby.match(/(?:due|due date)[:\s]+([^|·]{3,80})/i);
-      out.push({
-        schoologyId: id,
-        courseSchoologyId: course.schoologyId,
-        title: title.slice(0, 500),
-        description: nearby.slice(0, 1000),
-        dueAt: dateMatch ? parseDate(dateMatch[1]) : null,
-        category: 'preparatory',
-        pointsValue: 0,
-        isMissing: /missing|overdue/i.test(nearby),
-        url: href
-      });
+      out.push({ schoologyId:id, courseSchoologyId:course.schoologyId, title:title.slice(0,500), description:nearby.slice(0,1000), dueAt:dateMatch ? parseDate(dateMatch[1]) : null, category:'preparatory', pointsValue:0, isMissing:/missing|overdue/i.test(nearby), url:href });
     });
     return out;
   }
@@ -79,8 +69,7 @@
     for (const source of sources) {
       try {
         const doc = source.doc || await fetchDoc(source.path);
-        const url = source.url || absolute(source.path);
-        parseCourses(doc, url).forEach(course => coursesById.set(course.schoologyId, course));
+        parseCourses(doc, source.url || absolute(source.path)).forEach(course => coursesById.set(course.schoologyId, course));
       } catch (_) {}
     }
 
@@ -89,48 +78,44 @@
 
     const assignmentsById = new Map();
     for (const course of courses.slice(0, 50)) {
-      try {
-        const doc = course.url === location.href ? document : await fetchDoc(course.url);
-        parseAssignments(doc, course).forEach(item => assignmentsById.set(item.schoologyId, item));
-      } catch (_) {}
+      const paths = [course.url, `${new URL(course.url).pathname.replace(/\/$/, '')}/materials`];
+      for (const path of paths) {
+        try {
+          const doc = path === location.href ? document : await fetchDoc(path);
+          parseAssignments(doc, course).forEach(item => assignmentsById.set(item.schoologyId, item));
+        } catch (_) {}
+      }
     }
 
-    // The Schoology home page has a To Do list that can contain assignments
-    // that are not visible on a course landing page. Include those too.
     try {
       const home = location.pathname === '/home' ? document : await fetchDoc('/home');
       home.querySelectorAll('a[href*="/assignment/"]').forEach(a => {
         const href = absolute(a.getAttribute('href')); const id = assignmentId(href); if (!id || assignmentsById.has(id)) return;
         const title = text(a) || `Assignment ${id}`;
-        const nearby = text(a.closest('li, tr, article, .item') || a.parentElement);
-        const courseLink = (a.closest('li, tr, article, .item') || a.parentElement)?.querySelector('a[href*="/course/"]');
+        const parent = a.closest('li, tr, article, .item') || a.parentElement;
+        const nearby = text(parent);
+        const courseLink = parent?.querySelector('a[href*="/course/"]');
         const courseSchoologyId = courseId(absolute(courseLink?.getAttribute('href')) || '') || '';
-        const course = coursesById.get(courseSchoologyId);
-        if (!course) return;
+        const course = coursesById.get(courseSchoologyId); if (!course) return;
         const dateMatch = nearby.match(/(?:due|due date)[:\s]+([^|·]{3,80})/i);
         assignmentsById.set(id, { schoologyId:id, courseSchoologyId, title:title.slice(0,500), description:nearby.slice(0,1000), dueAt:dateMatch ? parseDate(dateMatch[1]) : null, category:'preparatory', pointsValue:0, isMissing:/missing|overdue/i.test(nearby), url:href });
       });
     } catch (_) {}
 
-    return { courses, assignments: [...assignmentsById.values()], schoolName: location.hostname };
+    return { courses, assignments:[...assignmentsById.values()], schoolName:location.hostname };
   }
 
   async function sync() {
-    button.disabled = true;
-    button.textContent = 'Syncing…';
-    status.textContent = 'Reading your Schoology classes and assignments…';
-    sub.textContent = 'Secure connection';
+    button.disabled = true; button.textContent = 'Syncing…'; status.textContent = 'Reading your Schoology classes and assignments…'; sub.textContent = 'Secure connection';
     try {
       const payload = await collect();
-      const result = await chrome.runtime.sendMessage({ type: 'CONNECT_AND_SYNC', payload });
+      const result = await chrome.runtime.sendMessage({ type:'CONNECT_AND_SYNC', payload });
       if (!result?.ok) throw new Error(result?.message || 'Could not connect to ClassPilot.');
       status.textContent = `Synced ${result.classesImported ?? payload.courses.length} classes · ${(result.assignmentsImported ?? 0) + (result.assignmentsUpdated ?? 0)} assignments.`;
-      sub.textContent = 'Connected · automatic sync on';
-      button.textContent = 'Sync now';
+      sub.textContent = 'Connected · automatic sync on'; button.textContent = 'Sync now';
     } catch (error) {
       status.textContent = error instanceof Error ? error.message : 'Sync could not be completed.';
-      sub.textContent = 'Needs attention';
-      button.textContent = 'Connect & sync';
+      sub.textContent = 'Needs attention'; button.textContent = 'Connect & sync';
     } finally { button.disabled = false; }
   }
 
