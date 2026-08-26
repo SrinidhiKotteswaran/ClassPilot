@@ -80,12 +80,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
     await data.updateAssignment(a.id, { completed: nowCompleting, completed_at: nowCompleting ? new Date().toISOString() : null, is_missing: nowCompleting ? false : a.is_missing });
     if (nowCompleting && profile) {
       const today = new Date();
-      const last = profile.last_completion_date ? new Date(profile.last_completion_date) : null;
-      let streak = profile.streak_count;
-      if (!last || !isSameDay(last, today)) {
-        const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-        streak = last && isSameDay(last, yesterday) ? streak + 1 : 1;
+      const last = profile.last_completion_date ? new Date(`${profile.last_completion_date}T00:00:00`) : null;
+      const completedToday = !!last && isSameDay(last, today);
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+
+      // A streak represents consecutive calendar days with at least one completion.
+      // Completing multiple assignments on the same day never increments it.
+      // The previous implementation could inflate the count when several assignments
+      // were completed in one day, so an existing same-day value is normalized to 1.
+      let streak: number;
+      if (completedToday) {
+        streak = 1;
+      } else if (last && isSameDay(last, yesterday)) {
+        streak = Math.max(1, profile.streak_count) + 1;
+      } else {
+        streak = 1;
       }
+
       if (DEMO_MODE || !supabase) {
         await import('@/context/AuthContext').then(({ updateDemoProfile }) => updateDemoProfile({ compass_points: profile.compass_points + a.points_value, streak_count: streak, last_completion_date: today.toISOString().slice(0, 10) }));
       } else {
