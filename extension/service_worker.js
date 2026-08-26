@@ -58,8 +58,12 @@ async function startSchoologySync(tabId) {
   if (!tabId) return { ok: false, message: 'No Schoology tab is available.' };
   const auth = await getAuth();
   if (!auth.classPilotAccessToken) return { ok: false, needsConnection: true, message: 'Connect to ClassPilot once.' };
+  await chrome.storage.local.set({ classPilotSyncError: null });
   try {
-    chrome.tabs.sendMessage(tabId, { type: 'SYNC_NOW' }).catch(() => {});
+    chrome.tabs.sendMessage(tabId, { type: 'SYNC_NOW' }).catch(error => {
+      const message = String(error?.message || error || 'Could not reach the Schoology page.');
+      chrome.storage.local.set({ classPilotSyncError: /Receiving end does not exist|Could not establish connection/i.test(message) ? 'Refresh the Schoology tab once, then try again.' : message });
+    });
     return { ok: true, started: true, message: 'Schoology sync started. Reading your calendar…' };
   } catch (_) {
     return { ok: false, message: 'Could not start Schoology sync. Refresh Schoology and try again.' };
