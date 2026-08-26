@@ -40,9 +40,6 @@ Deno.serve(async (req: Request) => {
   try {
     const now = () => new Date().toISOString();
 
-    // Keep the app-facing connection table in sync with the extension-facing
-    // tables. The frontend reads school_connections, while the raw Schoology
-    // records live in schoology_connections/schoology_courses.
     const { data: existingConnection } = await admin
       .from("school_connections")
       .select("id")
@@ -100,6 +97,8 @@ Deno.serve(async (req: Request) => {
 
     let assignmentsImported = 0;
     let assignmentsUpdated = 0;
+    const activeAssignmentIds = new Set<string>();
+
     for (const item of assignments) {
       const externalId = String(item.schoologyId ?? "").trim();
       if (!externalId) continue;
@@ -118,6 +117,7 @@ Deno.serve(async (req: Request) => {
       const category = String(item.category ?? "preparatory");
       const points = Number(item.pointsValue ?? 0) || 0;
       const missing = Boolean(item.isMissing);
+      activeAssignmentIds.add(externalId);
 
       if (courseRow) {
         const { error } = await admin.from("schoology_assignments").upsert({
@@ -154,11 +154,70 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // The calendar is the authoritative list of active Schoology work. Once a
+    // task disappears from the calendar (for example after submission), remove
+    // its stale Schoology-backed task from ClassPilot. Never touch manual tasks.
+    // We only reconcile rows inside the successfully fetched calendar window.
+    let assignmentsRemoved = 0;
+    let rawAssignmentsRemoved = 0;
+    const calendarSync = Boolean(payload.calendarSync);
+    const calendarMonthsFetched = Number(payload.calendarMonthsFetched ?? 0);
+    const windowEnd = payload.calendarWindowEnd ? new Date(payload.calendarWindowEnd) : null;
+    if (calendarSync && calendarMonthsFetched >= 1 && windowEnd && !Number.isNaN(windowEnd.getTime())) {
+      const windowEndIso = windowEnd.toISOString();
+
+      const { data: existingSchoologyAssignments, error: existingSchoologyError } = await admin
+        .from("assignments")
+        .select("id, schoology_assignment_id, due_date")
+        .eq("user_id", userId)
+        .eq("source", "schoology");
+      if (existingSchoologyError) throw existingSchoologyError;
+
+      for (const row of existingSchoologyAssignments ?? []) {
+        const externalId = String(row.schoology_assignment_id ?? "");
+        const due = row.due_date ? new Date(row.due_date) : null;
+        if (!externalId || !due || Number.isNaN(due.getTime())) continue;
+        if (due.getTime() > windowEnd.getTime()) continue;
+        if (activeAssignmentIds.has(externalId)) continue;
+
+        const { error } = await admin
+          .from("assignments")
+          .delete()
+          .eq("id", row.id)
+          .eq("user_id", userId)
+          .eq("source", "schoology");
+        if (error) throw error;
+        assignmentsRemoved++;
+      }
+
+      const { data: existingRawAssignments, error: rawAssignmentsError } = await admin
+        .from("schoology_assignments")
+        .select("id, schoology_id, due_at")
+        .eq("connection_id", rawConnection.id);
+      if (rawAssignmentsError) throw rawAssignmentsError;
+
+      for (const row of existingRawAssignments ?? []) {
+        const externalId = String(row.schoology_id ?? "");
+        const due = row.due_at ? new Date(row.due_at) : null;
+        if (!externalId || !due || Number.isNaN(due.getTime())) continue;
+        if (due.getTime() > windowEnd.getTime()) continue;
+        if (activeAssignmentIds.has(externalId)) continue;
+
+        const { error } = await admin
+          .from("schoology_assignments")
+          .delete()
+          .eq("id", row.id)
+          .eq("connection_id", rawConnection.id);
+        if (error) throw error;
+        rawAssignmentsRemoved++;
+      }
+    }
+
     const syncedAt = now();
     await admin.from("schoology_connections").update({ status: "connected", last_synced_at: syncedAt, error_message: null, updated_at: syncedAt }).eq("id", rawConnection.id);
-    if (appConnectionId) await admin.from("school_connections").update({ status: "connected", status_message: `Synced ${classesImported} classes and ${assignmentsImported + assignmentsUpdated} assignments through the ClassPilot extension.`, last_synced_at: syncedAt, updated_at: syncedAt }).eq("id", appConnectionId);
+    if (appConnectionId) await admin.from("school_connections").update({ status: "connected", status_message: `Synced ${classesImported} classes and ${assignmentsImported + assignmentsUpdated} upcoming assignments. Removed ${assignmentsRemoved} stale assignments.`, last_synced_at: syncedAt, updated_at: syncedAt }).eq("id", appConnectionId);
 
-    return json({ classesImported, assignmentsImported, assignmentsUpdated, errors: [], lastSyncedAt: syncedAt, message: "Schoology synced successfully." });
+    return json({ classesImported, assignmentsImported, assignmentsUpdated, assignmentsRemoved, rawAssignmentsRemoved, errors: [], lastSyncedAt: syncedAt, message: "Schoology calendar synced successfully." });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Schoology sync failed.";
     await admin.from("schoology_connections").update({ status: "error", error_message: message.slice(0, 500), updated_at: new Date().toISOString() }).eq("user_id", userId);
