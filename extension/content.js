@@ -22,38 +22,57 @@
   const courseId = href => String(href || '').match(/\/(?:course|section)\/(\d+)(?:[/?#]|$)/i)?.[1] || null;
   const assignmentId = href => String(href || '').match(/\/assignment\/(\d+)(?:[/?#]|$)/i)?.[1] || null;
   const calendarPath = value => String(value || '').match(/\/calendar\/(\d+)\/(\d{4})-(\d{2})(?:[/?#]|$)/i);
-  const parseDate = value => {
+
+  function parseDate(value) {
     if (value === null || value === undefined || value === '') return null;
     const stringValue = String(value).trim();
-    if (/^\d{10}$/.test(stringValue)) {
-      const milliseconds = Number(stringValue) * 1000;
-      return Number.isNaN(milliseconds) ? null : new Date(milliseconds).toISOString();
-    }
-    if (/^\d{13}$/.test(stringValue)) {
-      const milliseconds = Number(stringValue);
-      return Number.isNaN(milliseconds) ? null : new Date(milliseconds).toISOString();
-    }
+    if (/^\d{10}$/.test(stringValue)) return new Date(Number(stringValue) * 1000).toISOString();
+    if (/^\d{13}$/.test(stringValue)) return new Date(Number(stringValue)).toISOString();
     const parsed = Date.parse(stringValue);
     return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
-  };
+  }
+
   const monthKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 
+  function looksLikeRealCourseTitle(title) {
+    if (!title || title.length < 2) return false;
+    return !/^(home|materials|grades|calendar|members|more|view course|course dashboard|recent activity|to do)$/i.test(title);
+  }
+
+  // Schoology's home page contains course links inside recent-activity posts.
+  // Those are NOT necessarily the student's active classes. The course dashboard
+  // is the authoritative class list, so collect it separately and do not merge
+  // arbitrary /course/ links from the home feed.
   function parseCourses(doc, baseUrl) {
     const out = new Map();
-    const selectors = ['a[href*="/course/"]', 'a[href*="/section/"]', '[data-course-id]', '[data-section-id]', '[data-id][data-course]'].join(',');
+    const selectors = [
+      'a[href*="/course/"]',
+      '[data-course-id]',
+      '[data-section-id]'
+    ].join(',');
+
     doc.querySelectorAll(selectors).forEach(el => {
       const href = el.getAttribute?.('href');
       const dataId = el.getAttribute?.('data-course-id') || el.getAttribute?.('data-section-id');
       const id = courseId(absolute(href)) || (dataId && /^\d+$/.test(dataId) ? dataId : null);
       if (!id) return;
-      const title = text(el) || text(el.closest('[data-course-id], [data-section-id]')) || id;
-      if (title.length < 2 || /^(home|materials|grades|calendar|members|more|view course)$/i.test(title)) return;
-      out.set(id, { schoologyId: id, title: title.slice(0, 300), url: absolute(href) || `${location.origin}/course/${id}` });
+
+      // Prefer the visible course name, but strip common navigation text.
+      let title = text(el);
+      title = title.replace(/\s+(materials|grades|calendar|members|more)\s*$/i, '').trim();
+      if (!looksLikeRealCourseTitle(title)) return;
+
+      out.set(id, {
+        schoologyId: id,
+        title: title.slice(0, 300),
+        url: absolute(href) || `${location.origin}/course/${id}`
+      });
     });
+
     const currentId = courseId(baseUrl);
     if (currentId && !out.has(currentId)) {
       const heading = text(doc.querySelector('h1, [role="heading"]')) || text(doc.querySelector('title')).replace(/\s*[|–-].*$/, '');
-      if (heading) out.set(currentId, { schoologyId: currentId, title: heading.slice(0, 300), url: baseUrl });
+      if (looksLikeRealCourseTitle(heading)) out.set(currentId, { schoologyId: currentId, title: heading.slice(0, 300), url: baseUrl });
     }
     return [...out.values()];
   }
@@ -66,6 +85,7 @@
   function eventDate(anchor, pageMonth) {
     let node = anchor;
     for (let depth = 0; node && depth < 12; depth += 1, node = node.parentElement) {
+      // Schoology's upcoming cards use data-start and store a Unix timestamp.
       for (const attr of ['data-date', 'data-start', 'data-datetime', 'datetime', 'title']) {
         const value = node.getAttribute?.(attr);
         if (!value) continue;
@@ -73,7 +93,7 @@
         if (parsed) return parsed;
       }
       const numericDay = node.getAttribute?.('data-day');
-      if (numericDay && /^\d{1,2}$/.test(numericDay)) {
+      if (numericDay && /^\d{1,2}$/.test(numericDay) && pageMonth) {
         const [year, month] = pageMonth.split('-').map(Number);
         const candidate = new Date(year, month - 1, Number(numericDay), 23, 59, 59);
         if (!Number.isNaN(candidate.getTime())) return candidate.toISOString();
@@ -86,30 +106,51 @@
     const out = new Map();
     const links = [...doc.querySelectorAll('a[href*="/assignment/"]')];
     const now = Date.now();
+
     links.forEach(a => {
       const href = absolute(a.getAttribute('href'));
       const id = assignmentId(href);
       if (!id) return;
+
       const title = text(a) || `Assignment ${id}`;
       const event = a.closest('.upcoming-event, [data-start], li, td, tr, article, [role="gridcell"], .item, .s-ext-list-item');
       const nearby = text(event || a.parentElement);
       const dueAt = eventDate(a, pageMonth);
       const dueMs = dueAt ? Date.parse(dueAt) : NaN;
+
+      // Only import genuinely upcoming items. Schoology's To Do/Upcoming list
+      // already applies its own submission/completion rules.
       if (!dueAt || Number.isNaN(dueMs) || dueMs < now - 60 * 60 * 1000) return;
-      if (/\b(?:submitted|completed|turned in|already submitted)\b/i.test(nearby)) return;
+
       let courseSchoologyId = '';
-      const courseLink = event?.querySelector?.('a[href*="/course/"], a[href*="/section/"]');
+      const courseLink = event?.querySelector?.('a[href*="/course/"]');
       courseSchoologyId = courseId(absolute(courseLink?.getAttribute('href')) || '') || '';
+
       if (!courseSchoologyId) {
         const normalized = nearby.toLowerCase();
-        const match = [...coursesById.values()].find(course => normalized.includes(course.title.toLowerCase()));
+        const match = [...coursesById.values()]
+          .sort((a, b) => b.title.length - a.title.length)
+          .find(course => normalized.includes(course.title.toLowerCase()));
         courseSchoologyId = match?.schoologyId || '';
       }
-      if (!courseSchoologyId) return;
+
+      if (!courseSchoologyId || !coursesById.has(courseSchoologyId)) return;
       const course = coursesById.get(courseSchoologyId);
-      if (!course) return;
-      out.set(id, { schoologyId: id, courseSchoologyId, title: title.slice(0, 500), description: nearby.slice(0, 1000), dueAt, category: 'preparatory', pointsValue: 0, isMissing: /missing|overdue/i.test(nearby), url: href, source: 'calendar' });
+
+      out.set(id, {
+        schoologyId: id,
+        courseSchoologyId,
+        title: title.slice(0, 500),
+        description: nearby.slice(0, 1000),
+        dueAt,
+        category: 'preparatory',
+        pointsValue: 0,
+        isMissing: /\bmissing\b/i.test(nearby),
+        url: href,
+        source: 'calendar'
+      });
     });
+
     return [...out.values()];
   }
 
@@ -121,47 +162,42 @@
     return { doc: new DOMParser().parseFromString(await response.text(), 'text/html'), url: response.url || url };
   }
 
-  async function isAssignmentSubmitted(item) {
-    try {
-      const { doc } = await fetchDoc(item.url);
-      const combined = `${text(doc.body)} ${[...doc.querySelectorAll('a, button, input, [role="button"]')].map(el => text(el) || el.getAttribute?.('value') || el.getAttribute?.('aria-label') || '').join(' ')}`;
-      if (/\b(?:re-submit assignment|resubmit assignment|assignment submitted|submission details|view submission)\b/i.test(combined)) return true;
-      if (/\bsubmitted!\b/i.test(combined)) return true;
-      return false;
-    } catch (_) { return false; }
-  }
-
-  async function filterSubmitted(assignments) {
-    const results = await Promise.all(assignments.map(async item => ({ item, submitted: await isAssignmentSubmitted(item) })));
-    return results.filter(result => !result.submitted).map(result => result.item);
-  }
-
   async function collect() {
-    const sources = [{ doc: document, url: location.href }];
-    for (const path of ['/home/course-dashboard', '/home', '/courses']) if (new URL(path, location.origin).pathname !== location.pathname) sources.push({ path });
     const coursesById = new Map();
-    for (const source of sources) try {
-      const result = source.doc ? source : await fetchDoc(source.path);
-      parseCourses(result.doc, result.url).forEach(course => coursesById.set(course.schoologyId, course));
+
+    // IMPORTANT: do not scrape /home and /courses and merge every link found.
+    // Schoology's home feed contains historical/activity course links, which was
+    // the reason ClassPilot reported 17 classes instead of the student's active set.
+    try {
+      const dashboard = await fetchDoc('/home/course-dashboard');
+      parseCourses(dashboard.doc, dashboard.url).forEach(course => coursesById.set(course.schoologyId, course));
     } catch (_) {}
+
+    // If the course dashboard is unavailable, use the current page only as a fallback.
+    if (!coursesById.size) parseCourses(document, location.href).forEach(course => coursesById.set(course.schoologyId, course));
+
     const courses = [...coursesById.values()];
     if (!courses.length) throw new Error('No Schoology classes were found. Open your Schoology home page and try again.');
 
     const assignmentsById = new Map();
     const currentSeed = calendarUserAndMonth(location.href);
-    // Parse the already-loaded Upcoming/Home view first. This is where Schoology exposes data-start timestamps.
-    parseCalendarAssignments(document, coursesById, currentSeed?.month || monthKey(new Date())).forEach(item => assignmentsById.set(item.schoologyId, item));
+
+    // The currently loaded Schoology home page has the most reliable To Do list.
+    parseCalendarAssignments(document, coursesById, currentSeed?.month || monthKey(new Date()))
+      .forEach(item => assignmentsById.set(item.schoologyId, item));
 
     let calendarSeed = currentSeed;
     try {
       if (!calendarSeed) {
         const calendarResult = await fetchDoc('/calendar');
-        calendarSeed = calendarUserAndMonth(calendarResult.url) || calendarUserAndMonth([...calendarResult.doc.querySelectorAll('a[href*="/calendar/"]')].map(a => a.href).find(Boolean));
+        calendarSeed = calendarUserAndMonth(calendarResult.url)
+          || calendarUserAndMonth([...calendarResult.doc.querySelectorAll('a[href*="/calendar/"]')].map(a => a.href).find(Boolean));
       }
     } catch (_) {}
 
     let calendarMonthsFetched = 0;
     let calendarWindowEnd = null;
+
     if (calendarSeed) {
       const [year, month] = calendarSeed.month.split('-').map(Number);
       for (let offset = 0; offset < 3; offset += 1) {
@@ -169,44 +205,72 @@
         const key = monthKey(monthDate);
         const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59, 999);
         calendarWindowEnd = monthEnd.toISOString();
+
         try {
-          const result = offset === 0 && currentSeed?.month === key ? { doc: document } : await fetchDoc(`/calendar/${calendarSeed.userId}/${key}`);
-          parseCalendarAssignments(result.doc, coursesById, key).forEach(item => assignmentsById.set(item.schoologyId, item));
+          const result = offset === 0 && currentSeed?.month === key
+            ? { doc: document }
+            : await fetchDoc(`/calendar/${calendarSeed.userId}/${key}`);
+          parseCalendarAssignments(result.doc, coursesById, key)
+            .forEach(item => assignmentsById.set(item.schoologyId, item));
           calendarMonthsFetched += 1;
         } catch (_) {}
       }
     }
-    const upcoming = await filterSubmitted([...assignmentsById.values()]);
-    return { courses, assignments: upcoming, schoolName: location.hostname, calendarSync: true, calendarMonthsFetched, calendarWindowEnd };
+
+    // DO NOT fetch every assignment page and guess whether it is submitted.
+    // That previous heuristic looked for generic words such as "submission details",
+    // which appear on ordinary Schoology assignment pages and incorrectly removed
+    // almost every valid assignment. Schoology's Upcoming/To Do feed is already the
+    // correct source of truth for open assignments.
+    const upcoming = [...assignmentsById.values()];
+
+    return {
+      courses,
+      assignments: upcoming,
+      schoolName: location.hostname,
+      calendarSync: true,
+      calendarMonthsFetched,
+      calendarWindowEnd
+    };
   }
 
   let syncInFlight = null;
   async function sync() {
     if (syncInFlight) return syncInFlight;
     syncInFlight = (async () => {
-      button.disabled = true; button.textContent = 'Syncing…'; status.textContent = 'Reading your Schoology calendar…'; sub.textContent = 'Secure connection';
+      button.disabled = true;
+      button.textContent = 'Syncing…';
+      status.textContent = 'Reading your Schoology calendar…';
+      sub.textContent = 'Secure connection';
       try {
         const payload = await collect();
         status.textContent = `Found ${payload.courses.length} classes and ${payload.assignments.length} upcoming items. Connecting…`;
         const result = await chrome.runtime.sendMessage({ type: 'CONNECT_AND_SYNC', payload });
         if (!result?.ok) throw new Error(result?.message || 'Could not connect to ClassPilot.');
-        status.textContent = `Synced ${result.classesImported ?? payload.courses.length} classes · ${(result.assignmentsImported ?? 0) + (result.assignmentsUpdated ?? 0)} upcoming items${result.assignmentsRemoved ? ` · removed ${result.assignmentsRemoved} completed` : ''}.`;
-        sub.textContent = 'Connected · automatic sync on'; button.textContent = 'Sync now';
+        status.textContent = `Synced ${result.classesImported ?? payload.courses.length} classes · ${(result.assignmentsImported ?? 0) + (result.assignmentsUpdated ?? 0)} upcoming items.`;
+        sub.textContent = 'Connected · automatic sync on';
+        button.textContent = 'Sync now';
         return result;
       } catch (error) {
         status.textContent = error instanceof Error ? error.message : 'Sync could not be completed.';
-        sub.textContent = 'Needs attention'; button.textContent = 'Connect & sync';
+        sub.textContent = 'Needs attention';
+        button.textContent = 'Connect & sync';
         return { ok: false, message: status.textContent };
-      } finally { button.disabled = false; syncInFlight = null; }
+      } finally {
+        button.disabled = false;
+        syncInFlight = null;
+      }
     })();
     return syncInFlight;
   }
+
   button.addEventListener('click', sync);
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== 'SYNC_NOW') return false;
     sync().then(sendResponse).catch(error => sendResponse({ ok: false, message: error?.message || 'Schoology sync failed.' }));
     return true;
   });
+
   sync();
   setInterval(sync, 10 * 60 * 1000);
 })();
