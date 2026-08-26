@@ -63,15 +63,35 @@
         const parsed = parseDate(value);
         if (parsed) return parsed;
       }
+
+      const numericDay = node.getAttribute?.('data-day');
+      if (numericDay && /^\d{1,2}$/.test(numericDay)) {
+        const day = Number(numericDay);
+        if (day >= 1 && day <= 31) {
+          const [year, month] = pageMonth.split('-').map(Number);
+          const candidate = new Date(year, month - 1, day, 23, 59, 59);
+          if (!Number.isNaN(candidate.getTime())) return candidate.toISOString();
+        }
+      }
     }
 
     const cell = anchor.closest('td, [role="gridcell"], .fc-day, .calendar-day');
     if (cell) {
-      for (const attr of ['data-date', 'data-day', 'data-start', 'datetime']) {
+      for (const attr of ['data-date', 'data-start', 'datetime']) {
         const value = cell.getAttribute?.(attr);
         if (!value) continue;
         const parsed = parseDate(value);
         if (parsed) return parsed;
+      }
+
+      const numericDay = cell.getAttribute?.('data-day');
+      if (numericDay && /^\d{1,2}$/.test(numericDay)) {
+        const day = Number(numericDay);
+        if (day >= 1 && day <= 31) {
+          const [year, month] = pageMonth.split('-').map(Number);
+          const candidate = new Date(year, month - 1, day, 23, 59, 59);
+          if (!Number.isNaN(candidate.getTime())) return candidate.toISOString();
+        }
       }
 
       const dayMatch = text(cell).match(/(?:^|\s)([1-9]|[12]\d|3[01])(?:\s|$)/);
