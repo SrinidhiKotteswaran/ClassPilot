@@ -4,10 +4,6 @@ export function startOfToday(): Date {
   return d;
 }
 
-/** Calendar-day difference in the user's local timezone.
- * A due time later today is still 0 days away, not 1 day away just because
- * it is more than 24 hours from the current clock time in another timezone.
- */
 export function daysUntil(dateIso: string | null): number | null {
   if (!dateIso) return null;
   const due = new Date(dateIso);
@@ -57,6 +53,44 @@ export function greeting(): string {
   if (h < 12) return 'Good morning';
   if (h < 18) return 'Good afternoon';
   return 'Good evening';
+}
+
+const MOTIVATION = {
+  morning: [
+    'New day, new XP. 🎮✨ Go get that level-up.',
+    'Future you is already cheering. Give them something to celebrate. ☀️💪',
+    'Main-character energy starts with one tiny first step. 🎬🚀',
+    'You woke up. The quest has begun. 🗺️⚔️',
+    'Plot twist: today goes better than you expected. 🌅✨',
+    'You do not need to lock in for 12 hours. Just lock in for 10 minutes. ⏱️🔥',
+    'Two twos, my word: you’ve got this. ✌️😤',
+  ],
+  afternoon: [
+    'The day is not over. Your comeback arc is still loading. 🔥📈',
+    'One task down is one task closer. Keep cooking. 👨‍🍳✨',
+    'Do not let the afternoon convince you the day is already gone. 🌤️💪',
+    'Tiny progress beats perfect plans. Keep moving. 🏃‍♀️💨',
+    'POV: you started the assignment and it is already less scary. 😭📚',
+    'Lock in respectfully. Your future self has receipts. 🫡📈',
+    'Tung tung tung suhur… but make it your reminder to wake up your motivation. 🥁😂',
+  ],
+  evening: [
+    'You do not need to finish everything tonight. Just make tonight count. 🌙✨',
+    'The side quest can wait. Finish the main quest first. 🎮🗺️',
+    'Plot twist: you actually get it done. 🎬🔥',
+    'One last push. Tomorrow-you is going to be so relieved. 🌙💪',
+    'Even heroes have homework. Take it one quest at a time. 🦸📚',
+    'Your brain said “we’re cooked.” ClassPilot says “we have a plan.” 😭🫡',
+    'The assignment is temporary. The satisfaction of finishing it? Elite. 🏆✨',
+  ],
+} as const;
+
+export function motivation(): string {
+  const h = new Date().getHours();
+  const period: keyof typeof MOTIVATION = h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening';
+  const day = Math.floor(startOfToday().getTime() / 86400000);
+  const choices = MOTIVATION[period];
+  return choices[day % choices.length];
 }
 
 export const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
