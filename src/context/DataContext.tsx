@@ -42,6 +42,12 @@ const demoCommitments: Commitment[] = [
 
 function isSameDay(a: Date, b: Date): boolean { return a.toDateString() === b.toDateString(); }
 
+function compassPointsFor(a: Assignment): number {
+  // Compass Points reward progress, not grades: every completion is worth 10 points.
+  // Finishing something due today earns a small +5 focus bonus.
+  return 10 + (a.due_date && isSameDay(new Date(a.due_date), new Date()) ? 5 : 0);
+}
+
 async function seedDemoDataIfNeeded() {
   if (!DEMO_MODE || typeof window === 'undefined') return;
   const hasData = window.localStorage.getItem('classpilot.demo.seeded');
@@ -78,8 +84,32 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const toggleComplete = useCallback(async (a: Assignment) => {
     const nowCompleting = !a.completed;
     await data.updateAssignment(a.id, { completed: nowCompleting, completed_at: nowCompleting ? new Date().toISOString() : null, is_missing: nowCompleting ? false : a.is_missing });
+
     if (nowCompleting && profile) {
       const today = new Date();
+      const points = compassPointsFor(a);
+      let shouldAwardPoints = true;
+
+      if (DEMO_MODE || !supabase) {
+        // Demo mode has no durable event table, so keep its simple local profile behavior.
+        // The production path below is idempotent per assignment.
+        shouldAwardPoints = true;
+      } else {
+        const { data: pointEvent, error: pointEventError } = await supabase
+          .from('compass_point_events')
+          .insert({ user_id: profile.id, assignment_id: a.id, points, reason: a.due_date && isSameDay(new Date(a.due_date), today) ? 'assignment_completed_due_today' : 'assignment_completed' })
+          .select('id')
+          .maybeSingle();
+
+        if (pointEventError) {
+          // A duplicate event means this assignment already earned its points.
+          if (pointEventError.code === '23505') shouldAwardPoints = false;
+          else throw pointEventError;
+        } else {
+          shouldAwardPoints = !!pointEvent;
+        }
+      }
+
       const last = profile.last_completion_date ? new Date(`${profile.last_completion_date}T00:00:00`) : null;
       const completedToday = !!last && isSameDay(last, today);
       const yesterday = new Date(today);
@@ -87,21 +117,26 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
       // A streak represents consecutive calendar days with at least one completion.
       // Completing multiple assignments on the same day never increments it.
-      // The previous implementation could inflate the count when several assignments
-      // were completed in one day, so an existing same-day value is normalized to 1.
       let streak: number;
       if (completedToday) {
-        streak = 1;
+        streak = profile.streak_count;
       } else if (last && isSameDay(last, yesterday)) {
         streak = Math.max(1, profile.streak_count) + 1;
       } else {
         streak = 1;
       }
 
+      const profileUpdate = {
+        compass_points: shouldAwardPoints ? profile.compass_points + points : profile.compass_points,
+        streak_count: streak,
+        last_completion_date: today.toISOString().slice(0, 10),
+      };
+
       if (DEMO_MODE || !supabase) {
-        await import('@/context/AuthContext').then(({ updateDemoProfile }) => updateDemoProfile({ compass_points: profile.compass_points + a.points_value, streak_count: streak, last_completion_date: today.toISOString().slice(0, 10) }));
+        await import('@/context/AuthContext').then(({ updateDemoProfile }) => updateDemoProfile(profileUpdate));
       } else {
-        await supabase.from('profiles').update({ compass_points: profile.compass_points + a.points_value, streak_count: streak, last_completion_date: today.toISOString().slice(0, 10) }).eq('id', profile.id);
+        const { error: profileError } = await supabase.from('profiles').update(profileUpdate).eq('id', profile.id);
+        if (profileError) throw profileError;
       }
       await refreshProfile();
     }
