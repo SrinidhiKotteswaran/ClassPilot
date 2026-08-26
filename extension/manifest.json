@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
   "name": "ClassPilot Schoology Sync",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "ClassPilot's official Schoology sync extension. Imports classes and assignments and keeps them updated automatically while Schoology is open.",
   "permissions": ["storage", "tabs", "alarms", "scripting"],
   "host_permissions": ["https://*.schoology.com/*", "https://schoology.com/*", "https://class-pilot-sigma.vercel.app/*", "https://*.supabase.co/*"],
   "background": { "service_worker": "service_worker.js" },
   "action": { "default_title": "ClassPilot — Schoology Sync", "default_popup": "popup.html" },
   "content_scripts": [
-    { "matches": ["https://*.schoology.com/*", "https://schoology.com/*"], "js": ["content.js"], "run_at": "document_idle" },
+    { "matches": ["https://*.schoology.com/*", "https://schoology.com/*"], "js": ["content.js", "schoology-ui.js"], "run_at": "document_idle" },
     { "matches": ["https://class-pilot-sigma.vercel.app/*"], "js": ["classpilot-content.js"], "run_at": "document_idle" }
   ]
 }
