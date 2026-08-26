@@ -8,17 +8,21 @@ export interface ScoredAssignment {
   reasons: string[];
 }
 
-/**
- * Deterministic priority engine. Deadline urgency is the primary student-facing
- * signal; grade impact and effort only help choose between assignments with the
- * same/nearby deadline.
- */
+function isActuallyOverdue(a: Assignment): boolean {
+  if (isOverdue(a.due_date)) return true;
+  // A Schoology "missing" flag should only make work overdue once its due
+  // date has passed. This prevents future assignments from being labeled or
+  // recommended as overdue because of stale metadata.
+  if (!a.is_missing) return false;
+  if (!a.due_date) return true;
+  return new Date(a.due_date).getTime() <= Date.now();
+}
+
 export function scoreAssignment(a: Assignment, cls: Class | undefined): ScoredAssignment {
   const reasons: string[] = [];
   let score = 0;
-
   const days = daysUntil(a.due_date);
-  const overdue = !a.completed && (a.is_missing || isOverdue(a.due_date));
+  const overdue = !a.completed && isActuallyOverdue(a);
 
   if (overdue) {
     score += 100;
@@ -47,7 +51,6 @@ export function scoreAssignment(a: Assignment, cls: Class | undefined): ScoredAs
   }
 
   if (a.estimated_minutes <= 30) score += 2;
-
   return { assignment: a, score: Math.round(score), reasons };
 }
 
@@ -64,15 +67,10 @@ export function rankAssignments(assignments: Assignment[], classes: Class[]): Sc
     });
 }
 
-/** Only show the two actionable urgency labels requested by the dashboard:
- * Critical = due today; Overdue = missing or past due. Everything else is
- * intentionally unlabeled so the UI stays calm and deadline-focused.
- */
 export function priorityLabel(_score: number, assignment?: Assignment): { label: string; className: string } {
   if (!assignment?.due_date) return { label: '', className: '' };
 
-  const overdue = assignment.is_missing || isOverdue(assignment.due_date);
-  if (overdue) {
+  if (isActuallyOverdue(assignment)) {
     return { label: 'Overdue', className: 'bg-rose-50 text-rose-700 ring-1 ring-rose-100' };
   }
 
