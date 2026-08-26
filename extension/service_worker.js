@@ -3,6 +3,7 @@ const SUPABASE_URL = 'https://ixolapnghbfpmspdpesn.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml4b2xhcG5naGJmcG1zcGRwZXNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1OTMwNTIsImV4cCI6MjEwMzE2OTA1Mn0.yXfAIjKeSgKFY32thJ8wt7D_4EnI5BlrCnfuErwfbis';
 const SYNC_URL = `${SUPABASE_URL}/functions/v1/schoology-sync`;
 const SYNC_ALARM = 'classpilot-schoology-sync';
+const SCHOOLOGY_URLS = ['https://*.schoology.com/*', 'https://schoology.com/*'];
 
 async function ensureAlarm() { await chrome.alarms.create(SYNC_ALARM, { periodInMinutes: 10 }); }
 chrome.runtime.onInstalled.addListener(ensureAlarm);
@@ -25,29 +26,24 @@ async function extractClassPilotSession(tabId) {
         if (raw) values.push({ key, raw });
       }
       values.sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
-      const rawCandidates = [];
       const whole = values.find(v => v.key === AUTH_PREFIX);
-      if (whole) rawCandidates.push(whole.raw);
+      const raws = whole ? [whole.raw] : [];
       const chunks = values.filter(v => v.key !== AUTH_PREFIX && /^.+\.\d+$/.test(v.key));
-      if (chunks.length) rawCandidates.push(chunks.map(v => v.raw).join(''));
-
-      const parsedCandidates = [];
-      for (const raw of rawCandidates) {
-        try { parsedCandidates.push(JSON.parse(raw)); } catch (_) {}
-      }
-      const looksLikeSession = value => Boolean(
-        value && typeof value === 'object' && typeof value.access_token === 'string' &&
-        value.access_token.length > 20 && value.user && typeof value.user.id === 'string'
-      );
-      const queue = [...parsedCandidates];
-      const seen = new Set();
-      while (queue.length) {
-        const value = queue.shift();
-        if (!value || typeof value !== 'object' || seen.has(value)) continue;
-        seen.add(value);
-        if (looksLikeSession(value)) return { ok: true, accessToken: value.access_token, refreshToken: value.refresh_token || null, userId: value.user.id };
-        if (Array.isArray(value)) queue.push(...value);
-        else Object.values(value).forEach(child => { if (child && typeof child === 'object') queue.push(child); });
+      if (chunks.length) raws.push(chunks.map(v => v.raw).join(''));
+      for (const raw of raws) {
+        try {
+          const root = JSON.parse(raw);
+          const queue = [root];
+          const seen = new Set();
+          while (queue.length) {
+            const value = queue.shift();
+            if (!value || typeof value !== 'object' || seen.has(value)) continue;
+            seen.add(value);
+            if (typeof value.access_token === 'string' && value.user?.id) return { ok: true, accessToken: value.access_token, refreshToken: value.refresh_token || null, userId: value.user.id };
+            if (Array.isArray(value)) queue.push(...value);
+            else Object.values(value).forEach(child => { if (child && typeof child === 'object') queue.push(child); });
+          }
+        } catch (_) {}
       }
       return { ok: false, reason: 'No active ClassPilot Supabase session was found.' };
     }
@@ -73,7 +69,6 @@ async function connectToClassPilot() {
   if (!tab?.id) tab = await chrome.tabs.create({ url: CLASS_PILOT_URL, active: true });
   else await chrome.tabs.update(tab.id, { active: true });
   if (!tab?.id) return { ok: false, message: 'Could not open ClassPilot.' };
-
   let lastReason = 'No active ClassPilot Supabase session was found.';
   for (let attempt = 0; attempt < 30; attempt += 1) {
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -126,7 +121,7 @@ async function syncPayload(payload) {
 }
 
 async function startSchoologySync(tabId) {
-  if (!tabId) return { ok: false, message: 'No Schoology tab is available.' };
+  if (!tabId) return { ok: false, message: 'No Schoology tab is available. Open Schoology first.' };
   let auth = await getAuth();
   if (!auth.classPilotAccessToken) {
     const connected = await connectToClassPilot();
@@ -134,15 +129,32 @@ async function startSchoologySync(tabId) {
     auth = await getAuth();
   }
   await chrome.storage.local.set({ classPilotSyncError: null });
-  try {
-    const result = await chrome.tabs.sendMessage(tabId, { type: 'SYNC_NOW' });
-    return result?.ok ? result : { ok: false, message: result?.message || 'Schoology sync did not complete.' };
-  } catch (error) {
-    const message = String(error?.message || error || 'Could not reach the Schoology page.');
-    const friendly = /Receiving end does not exist|Could not establish connection/i.test(message) ? 'Refresh the Schoology tab once so ClassPilot can attach to it, then try Sync Schoology now again.' : message;
-    await chrome.storage.local.set({ classPilotSyncError: friendly });
-    return { ok: false, message: friendly };
+
+  // The Schoology content script owns scraping. Retry once after reloading the
+  // tab when Chrome reports that the old MV3 content-script context vanished.
+  // This is the important recovery path for tabs that survived an extension update.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const result = await chrome.tabs.sendMessage(tabId, { type: 'SYNC_NOW' });
+      if (result?.ok) return result;
+      const message = result?.message || 'Schoology sync did not complete.';
+      await chrome.storage.local.set({ classPilotSyncError: message });
+      return { ok: false, message };
+    } catch (error) {
+      const message = String(error?.message || error || 'Could not reach the Schoology page.');
+      const staleContext = /Receiving end does not exist|Could not establish connection|Extension context invalidated/i.test(message);
+      if (!staleContext || attempt === 1) {
+        const friendly = staleContext ? 'The Schoology page is using an old ClassPilot extension context. Reload the Schoology tab once, then try Sync again.' : message;
+        await chrome.storage.local.set({ classPilotSyncError: friendly });
+        return { ok: false, message: friendly };
+      }
+      try {
+        await chrome.tabs.reload(tabId);
+        await new Promise(resolve => setTimeout(resolve, 1800));
+      } catch (_) {}
+    }
   }
+  return { ok: false, message: 'Schoology sync could not be started.' };
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -157,8 +169,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse(await syncPayload(message.payload)); return;
     }
     if (message?.type === 'SYNC_ACTIVE_SCHOOLOGY') {
-      const tabs = await chrome.tabs.query({ url: ['https://*.schoology.com/*', 'https://schoology.com/*'] });
-      sendResponse(await startSchoologySync(tabs[0]?.id)); return;
+      const tabs = await chrome.tabs.query({ url: SCHOOLOGY_URLS });
+      if (!tabs.length) { sendResponse({ ok: false, message: 'No Schoology tab is open. Open motcharter.schoology.com first.' }); return; }
+      const tab = tabs.find(item => /schoology\.com/i.test(item.url || '')) || tabs[0];
+      sendResponse(await startSchoologySync(tab.id)); return;
     }
     sendResponse({ ok: false, message: 'Unknown request.' });
   })().catch(error => sendResponse({ ok: false, message: error?.message || 'Unexpected extension error.' }));
@@ -167,6 +181,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name !== SYNC_ALARM) return;
-  const tabs = await chrome.tabs.query({ url: ['https://*.schoology.com/*', 'https://schoology.com/*'] });
+  const tabs = await chrome.tabs.query({ url: SCHOOLOGY_URLS });
   if (tabs[0]?.id) await startSchoologySync(tabs[0].id);
 });
