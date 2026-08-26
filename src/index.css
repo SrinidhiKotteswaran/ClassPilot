@@ -21,3 +21,13 @@ body {
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
 }
+
+/* Dashboard: the second stat is the calendar-day "Showing up" streak. */
+.grid.grid-cols-2.gap-3.sm\:grid-cols-4 > :nth-child(2) .text-sm.text-slate-500 {
+  font-size: 0;
+}
+
+.grid.grid-cols-2.gap-3.sm\:grid-cols-4 > :nth-child(2) .text-sm.text-slate-500::after {
+  content: 'Showing up';
+  font-size: 0.875rem;
+}
