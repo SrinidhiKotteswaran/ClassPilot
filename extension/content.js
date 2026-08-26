@@ -47,17 +47,45 @@
     return [...out.values()];
   }
 
-  function parseAssignments(doc, course) {
-    const out = [];
-    doc.querySelectorAll('a[href*="/assignment/"]').forEach(a => {
+  function parseUpcomingAssignments(doc, coursesById) {
+    const out = new Map();
+    const links = [...doc.querySelectorAll('a[href*="/assignment/"]')];
+    links.forEach(a => {
       const href = absolute(a.getAttribute('href')); const id = assignmentId(href); if (!id) return;
       const title = text(a) || `Assignment ${id}`;
-      const parent = a.closest('li, tr, article, .item, .material, .s-ext-list-item') || a.parentElement;
+      const parent = a.closest('li, tr, article, .item, .s-ext-list-item') || a.parentElement;
       const nearby = text(parent);
-      const dateMatch = nearby.match(/(?:due|due date)[:\s]+([^|·]{3,80})/i);
-      out.push({ schoologyId:id, courseSchoologyId:course.schoologyId, title:title.slice(0,500), description:nearby.slice(0,1000), dueAt:dateMatch ? parseDate(dateMatch[1]) : null, category:'preparatory', pointsValue:0, isMissing:/missing|overdue/i.test(nearby), url:href });
+      if (/\b(?:submitted|completed|turned in|already submitted|recently completed)\b/i.test(nearby)) return;
+
+      // Only import assignments that appear in Schoology's active To Do / Upcoming
+      // area. This prevents historical course assignments from entering ClassPilot.
+      let node = a;
+      let isUpcoming = false;
+      for (let depth = 0; node && depth < 10; depth += 1, node = node.parentElement) {
+        const blockText = text(node).slice(0, 8000);
+        if (/\bRECENTLY COMPLETED\b/i.test(blockText)) continue;
+        if (/\bUPCOMING\b/i.test(blockText)) { isUpcoming = true; break; }
+      }
+      if (!isUpcoming) return;
+
+      const courseLink = parent?.querySelector('a[href*="/course/"], a[href*="/section/"]');
+      let courseSchoologyId = courseId(absolute(courseLink?.getAttribute('href')) || '') || '';
+      if (!courseSchoologyId) {
+        // Some Schoology To Do rows put the course name beside the assignment
+        // rather than linking it. Match that visible course name to our discovered courses.
+        const normalized = nearby.toLowerCase();
+        const match = [...coursesById.values()].find(course => normalized.includes(course.title.toLowerCase()));
+        courseSchoologyId = match?.schoologyId || '';
+      }
+      if (!courseSchoologyId) return;
+
+      const course = coursesById.get(courseSchoologyId);
+      if (!course) return;
+      const dateMatch = nearby.match(/(?:due|due date)[:\s]+([^|·]{3,100})/i);
+      const dueAt = dateMatch ? parseDate(dateMatch[1]) : null;
+      out.set(id, { schoologyId:id, courseSchoologyId, title:title.slice(0,500), description:nearby.slice(0,1000), dueAt, category:'preparatory', pointsValue:0, isMissing:/missing|overdue/i.test(nearby), url:href });
     });
-    return out;
+    return [...out.values()];
   }
 
   async function fetchDoc(path) {
@@ -89,37 +117,15 @@
     const courses = [...coursesById.values()];
     if (!courses.length) throw new Error('No Schoology classes were found. Open your Schoology home page and try again.');
 
-    const assignmentsById = new Map();
-    for (const course of courses.slice(0, 100)) {
-      const coursePath = new URL(course.url, location.origin).pathname.replace(/\/$/, '');
-      const paths = [course.url, `${coursePath}/materials`, `${coursePath}/assignments`];
-      for (const path of paths) {
-        try {
-          const result = path === location.href ? { doc: document, url: path } : await fetchDoc(path);
-          parseAssignments(result.doc, course).forEach(item => assignmentsById.set(item.schoologyId, item));
-        } catch (_) {}
-      }
-    }
-
-    // The Schoology home feed can contain assignments whose course page is not
-    // represented in the visible navigation. Recover the course from nearby
-    // course/section links before adding those assignments.
+    // Schoology's home To Do list is the source of truth for active work. Do not
+    // crawl course Materials pages because those contain completed historical work.
+    let assignments = [];
     try {
       const homeResult = location.pathname === '/home' ? { doc: document, url: location.href } : await fetchDoc('/home');
-      homeResult.doc.querySelectorAll('a[href*="/assignment/"]').forEach(a => {
-        const href = absolute(a.getAttribute('href')); const id = assignmentId(href); if (!id || assignmentsById.has(id)) return;
-        const title = text(a) || `Assignment ${id}`;
-        const parent = a.closest('li, tr, article, .item, .s-ext-list-item') || a.parentElement;
-        const nearby = text(parent);
-        const courseLink = parent?.querySelector('a[href*="/course/"], a[href*="/section/"]');
-        const courseSchoologyId = courseId(absolute(courseLink?.getAttribute('href')) || '') || '';
-        const course = coursesById.get(courseSchoologyId); if (!course) return;
-        const dateMatch = nearby.match(/(?:due|due date)[:\s]+([^|·]{3,80})/i);
-        assignmentsById.set(id, { schoologyId:id, courseSchoologyId, title:title.slice(0,500), description:nearby.slice(0,1000), dueAt:dateMatch ? parseDate(dateMatch[1]) : null, category:'preparatory', pointsValue:0, isMissing:/missing|overdue/i.test(nearby), url:href });
-      });
+      assignments = parseUpcomingAssignments(homeResult.doc, coursesById);
     } catch (_) {}
 
-    return { courses, assignments:[...assignmentsById.values()], schoolName:location.hostname };
+    return { courses, assignments, schoolName:location.hostname };
   }
 
   async function sync() {
