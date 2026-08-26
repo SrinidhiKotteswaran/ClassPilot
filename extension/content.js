@@ -159,6 +159,36 @@
     return { doc: new DOMParser().parseFromString(await response.text(), 'text/html'), url: response.url || url };
   }
 
+  // Schoology's calendar can continue to show an assignment after it has been
+  // submitted. The assignment page is the authoritative source for the
+  // student's submission state, so verify candidates before importing them.
+  async function isAssignmentSubmitted(item) {
+    try {
+      const { doc } = await fetchDoc(item.url);
+      const body = text(doc.body);
+      const controls = [...doc.querySelectorAll('a, button, input, [role="button"]')]
+        .map(el => text(el) || el.getAttribute?.('value') || el.getAttribute?.('aria-label') || '')
+        .join(' ');
+      const combined = `${body} ${controls}`;
+
+      if (/\b(?:re-submit assignment|resubmit assignment|assignment submitted|submission details|view submission)\b/i.test(combined)) return true;
+      if (/\bsubmitted!\b/i.test(combined)) return true;
+
+      // If Schoology explicitly exposes a submit action, the work is still open.
+      if (/\bsubmit assignment\b/i.test(combined) && !/\b(?:re-submit|resubmit) assignment\b/i.test(combined)) return false;
+      return false;
+    } catch (_) {
+      // If a single assignment page cannot be read, keep the calendar item.
+      // A transient page failure must not make real upcoming work disappear.
+      return false;
+    }
+  }
+
+  async function filterSubmitted(assignments) {
+    const results = await Promise.all(assignments.map(async item => ({ item, submitted: await isAssignmentSubmitted(item) })));
+    return results.filter(result => !result.submitted).map(result => result.item);
+  }
+
   async function collect() {
     const sources = [{ doc: document, url: location.href }];
     const candidatePaths = ['/home/course-dashboard', '/home', '/courses'];
@@ -211,9 +241,10 @@
 
     if (calendarMonthsFetched < 1) throw new Error('Could not read your Schoology calendar.');
 
+    const upcoming = await filterSubmitted([...assignmentsById.values()]);
     return {
       courses,
-      assignments: [...assignmentsById.values()],
+      assignments: upcoming,
       schoolName: location.hostname,
       calendarSync: true,
       calendarMonthsFetched,
@@ -221,23 +252,38 @@
     };
   }
 
+  let syncInFlight = null;
   async function sync() {
-    button.disabled = true; button.textContent = 'Syncing…'; status.textContent = 'Reading your Schoology calendar…'; sub.textContent = 'Secure connection';
-    try {
-      const payload = await collect();
-      status.textContent = `Found ${payload.courses.length} classes and ${payload.assignments.length} upcoming items. Connecting…`;
-      const result = await chrome.runtime.sendMessage({ type:'CONNECT_AND_SYNC', payload });
-      if (!result?.ok) throw new Error(result?.message || 'Could not connect to ClassPilot.');
-      status.textContent = `Synced ${result.classesImported ?? payload.courses.length} classes · ${(result.assignmentsImported ?? 0) + (result.assignmentsUpdated ?? 0)} upcoming items.`;
-      sub.textContent = 'Connected · automatic sync on'; button.textContent = 'Sync now';
-    } catch (error) {
-      status.textContent = error instanceof Error ? error.message : 'Sync could not be completed.';
-      sub.textContent = 'Needs attention'; button.textContent = 'Connect & sync';
-    } finally { button.disabled = false; }
+    if (syncInFlight) return syncInFlight;
+    syncInFlight = (async () => {
+      button.disabled = true; button.textContent = 'Syncing…'; status.textContent = 'Reading your Schoology calendar…'; sub.textContent = 'Secure connection';
+      try {
+        const payload = await collect();
+        status.textContent = `Found ${payload.courses.length} classes and ${payload.assignments.length} upcoming items. Connecting…`;
+        let result;
+        try {
+          result = await chrome.runtime.sendMessage({ type:'CONNECT_AND_SYNC', payload });
+        } catch (error) {
+          const message = String(error?.message || error || 'Extension connection was interrupted.');
+          if (/Extension context invalidated/i.test(message)) throw new Error('Extension was updated. Reload this Schoology tab and try again.');
+          throw error;
+        }
+        if (!result?.ok) throw new Error(result?.message || 'Could not connect to ClassPilot.');
+        status.textContent = `Synced ${result.classesImported ?? payload.courses.length} classes · ${(result.assignmentsImported ?? 0) + (result.assignmentsUpdated ?? 0)} upcoming items${result.assignmentsRemoved ? ` · removed ${result.assignmentsRemoved} completed` : ''}.`;
+        sub.textContent = 'Connected · automatic sync on'; button.textContent = 'Sync now';
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : 'Sync could not be completed.';
+        sub.textContent = 'Needs attention'; button.textContent = 'Connect & sync';
+      } finally {
+        button.disabled = false;
+        syncInFlight = null;
+      }
+    })();
+    return syncInFlight;
   }
 
   button.addEventListener('click', sync);
-  chrome.runtime.onMessage.addListener(message => { if (message?.type === 'SYNC_NOW') sync(); });
+  chrome.runtime.onMessage.addListener(message => { if (message?.type === 'SYNC_NOW') { sync(); return false; } });
   sync();
   setInterval(sync, 10 * 60 * 1000);
 })();
