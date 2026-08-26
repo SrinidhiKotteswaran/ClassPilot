@@ -4,8 +4,10 @@ const connectButton = document.getElementById('connect');
 const syncButton = document.getElementById('sync');
 const messageEl = document.getElementById('message');
 
+async function getState() { return chrome.runtime.sendMessage({ type: 'GET_STATE' }); }
+
 async function refresh() {
-  const state = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
+  const state = await getState();
   if (state?.connected) {
     statusEl.textContent = 'Connected to ClassPilot. Schoology can now sync automatically.';
     connectButton.textContent = 'Connected ✓';
@@ -32,11 +34,46 @@ connectButton.addEventListener('click', async () => {
 });
 
 syncButton.addEventListener('click', async () => {
+  syncButton.disabled = true;
   messageEl.className = 'message';
-  messageEl.textContent = 'Switch to an open Schoology tab to sync.';
+  messageEl.textContent = 'Starting Schoology calendar sync…';
+  const before = await getState();
   const result = await chrome.runtime.sendMessage({ type: 'SYNC_ACTIVE_SCHOOLOGY' });
-  if (!result?.ok) { messageEl.className = 'message error'; messageEl.textContent = result?.message || 'Could not sync Schoology.'; }
-  else { messageEl.className = 'message success'; messageEl.textContent = result.message || 'Sync started.'; }
+  if (!result?.ok) {
+    messageEl.className = 'message error';
+    messageEl.textContent = result?.message || 'Could not start Schoology sync.';
+    syncButton.disabled = false;
+    return;
+  }
+
+  messageEl.className = 'message';
+  messageEl.textContent = 'Reading Schoology calendar…';
+  const previousSync = before?.lastSync || null;
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 750));
+    const state = await getState();
+    if (state?.syncError) {
+      messageEl.className = 'message error';
+      messageEl.textContent = state.syncError;
+      syncButton.disabled = false;
+      await refresh();
+      return;
+    }
+    if (state?.lastSync && state.lastSync !== previousSync) {
+      messageEl.className = 'message success';
+      messageEl.textContent = 'Schoology calendar synced successfully.';
+      syncButton.disabled = false;
+      await refresh();
+      return;
+    }
+  }
+
+  // The sync may still be finishing; don't report a false failure merely
+  // because the popup's 30-second lifetime ended.
+  messageEl.className = 'message';
+  messageEl.textContent = 'Sync is still running. Keep Schoology open; it will update automatically when finished.';
+  syncButton.disabled = false;
   await refresh();
 });
 
