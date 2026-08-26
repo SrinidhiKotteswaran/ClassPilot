@@ -9,55 +9,44 @@ export interface ScoredAssignment {
 }
 
 /**
- * Deterministic priority engine. Ranks assignments by combining deadline
- * urgency, grade impact (category weight + how far a class is from its goal),
- * missing status, and effort. Every factor that moved the score is surfaced as
- * a plain-English reason so recommendations are always explainable.
+ * Deterministic priority engine. Deadline urgency is the primary student-facing
+ * signal; grade impact and effort only help choose between assignments with the
+ * same/nearby deadline.
  */
 export function scoreAssignment(a: Assignment, cls: Class | undefined): ScoredAssignment {
   const reasons: string[] = [];
   let score = 0;
 
   const days = daysUntil(a.due_date);
-  if (a.is_missing || (isOverdue(a.due_date) && !a.completed)) {
-    score += 55;
-    reasons.push('Missing or overdue — completing it can recover grade quickly');
+  const overdue = !a.completed && (a.is_missing || isOverdue(a.due_date));
+
+  if (overdue) {
+    score += 100;
+    reasons.push('Missing or overdue');
   } else if (days !== null) {
-    if (days <= 0) {
-      score += 45;
+    if (days === 0) {
+      score += 90;
       reasons.push('Due today');
     } else if (days === 1) {
-      score += 35;
+      score += 70;
       reasons.push('Due tomorrow');
-    } else if (days <= 3) {
-      score += 24;
-      reasons.push(`Due in ${days} days`);
     } else if (days <= 7) {
-      score += 12;
-      reasons.push('Due this week');
+      score += Math.max(10, 60 - days * 5);
+      reasons.push(`Due in ${days} days`);
     } else {
-      score += 4;
+      score += 5;
     }
   }
 
   const meta = CATEGORIES[a.category];
-  const impact = Math.round(meta.weight * 30);
-  score += impact;
-  if (meta.weight >= 0.7) {
-    reasons.push(`High grade impact (${meta.short.toLowerCase()})`);
-  }
+  score += Math.round(meta.weight * 20);
 
   if (cls && cls.current_grade != null && cls.goal_grade != null) {
     const gap = cls.goal_grade - cls.current_grade;
-    if (gap > 0) {
-      score += Math.min(20, gap * 1.5);
-      reasons.push(`Supports your ${cls.name} goal (${cls.current_grade}% → ${cls.goal_grade}%)`);
-    }
+    if (gap > 0) score += Math.min(10, gap);
   }
 
-  if (a.estimated_minutes <= 30) {
-    score += 4;
-  }
+  if (a.estimated_minutes <= 30) score += 2;
 
   return { assignment: a, score: Math.round(score), reasons };
 }
@@ -68,8 +57,6 @@ export function rankAssignments(assignments: Assignment[], classes: Class[]): Sc
     .filter((a) => !a.completed)
     .map((a) => scoreAssignment(a, a.class_id ? byId.get(a.class_id) : undefined))
     .sort((x, y) => {
-      // For the student-facing order, deadline comes before grade-impact
-      // bonuses. Overdue work stays first, then the nearest due date.
       const xTime = x.assignment.due_date ? new Date(x.assignment.due_date).getTime() : Number.POSITIVE_INFINITY;
       const yTime = y.assignment.due_date ? new Date(y.assignment.due_date).getTime() : Number.POSITIVE_INFINITY;
       if (xTime !== yTime) return xTime - yTime;
@@ -77,25 +64,21 @@ export function rankAssignments(assignments: Assignment[], classes: Class[]): Sc
     });
 }
 
-export function priorityLabel(score: number, assignment?: Assignment): { label: string; className: string } {
-  if (assignment?.due_date) {
-    const days = daysUntil(assignment.due_date);
-    if (days === 0 && !assignment.is_missing && !isOverdue(assignment.due_date)) {
-      return { label: 'Critical', className: 'bg-rose-50 text-rose-700 ring-1 ring-rose-100' };
-    }
-    if (days !== null && days < 0) {
-      return { label: 'High', className: 'bg-amber-50 text-amber-700 ring-1 ring-amber-100' };
-    }
-    if (days === 1) {
-      return { label: 'High', className: 'bg-amber-50 text-amber-700 ring-1 ring-amber-100' };
-    }
-    if (days !== null && days <= 3) {
-      return { label: 'Medium', className: 'bg-sky-50 text-sky-700 ring-1 ring-sky-100' };
-    }
-    return { label: 'Low', className: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200' };
+/** Only show the two actionable urgency labels requested by the dashboard:
+ * Critical = due today; Overdue = missing or past due. Everything else is
+ * intentionally unlabeled so the UI stays calm and deadline-focused.
+ */
+export function priorityLabel(_score: number, assignment?: Assignment): { label: string; className: string } {
+  if (!assignment?.due_date) return { label: '', className: '' };
+
+  const overdue = assignment.is_missing || isOverdue(assignment.due_date);
+  if (overdue) {
+    return { label: 'Overdue', className: 'bg-rose-50 text-rose-700 ring-1 ring-rose-100' };
   }
 
-  if (score >= 45) return { label: 'High', className: 'bg-amber-50 text-amber-700 ring-1 ring-amber-100' };
-  if (score >= 25) return { label: 'Medium', className: 'bg-sky-50 text-sky-700 ring-1 ring-sky-100' };
-  return { label: 'Low', className: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200' };
+  if (daysUntil(assignment.due_date) === 0) {
+    return { label: 'Critical', className: 'bg-rose-50 text-rose-700 ring-1 ring-rose-100' };
+  }
+
+  return { label: '', className: '' };
 }
