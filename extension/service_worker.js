@@ -1,17 +1,15 @@
 const CLASS_PILOT_URL = 'https://class-pilot-sigma.vercel.app/';
 const SUPABASE_URL = 'https://ixolapnghbfpmspdpesn.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml4b2xhcG5naGJmcG1zcGRwZXNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1OTMwNTIsImV4cCI6MjEwMzE2OTA1Mn0.yXfAIjKeSgKFY32thJ8wt7D_4EnI5BlrCnfuErwfbis';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXAiLCJyb2xlIjoiYW5vbiJ9';
 const SYNC_URL = `${SUPABASE_URL}/functions/v1/schoology-sync`;
 const SYNC_ALARM = 'classpilot-schoology-sync';
 
-async function ensureAlarm() {
-  await chrome.alarms.create(SYNC_ALARM, { periodInMinutes: 10 });
-}
+async function ensureAlarm() { await chrome.alarms.create(SYNC_ALARM, { periodInMinutes: 10 }); }
 chrome.runtime.onInstalled.addListener(ensureAlarm);
 chrome.runtime.onStartup.addListener(ensureAlarm);
 
 async function getAuth() {
-  return chrome.storage.local.get(['classPilotAccessToken', 'classPilotUserId', 'classPilotLastSync']);
+  return chrome.storage.local.get(['classPilotAccessToken', 'classPilotUserId', 'classPilotLastSync', 'classPilotSyncError']);
 }
 
 async function connectToClassPilot() {
@@ -20,7 +18,6 @@ async function connectToClassPilot() {
   if (!tab?.id) tab = await chrome.tabs.create({ url: CLASS_PILOT_URL, active: true });
   else await chrome.tabs.update(tab.id, { active: true });
   if (!tab?.id) return { ok: false, message: 'Could not open ClassPilot.' };
-
   for (let attempt = 0; attempt < 12; attempt++) {
     await new Promise(resolve => setTimeout(resolve, 500));
     try {
@@ -35,53 +32,57 @@ async function connectToClassPilot() {
 async function syncPayload(payload) {
   const { classPilotAccessToken } = await getAuth();
   if (!classPilotAccessToken) return { ok: false, needsConnection: true, message: 'Connect to ClassPilot once.' };
-
-  const response = await fetch(SYNC_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${classPilotAccessToken}`,
-      apikey: SUPABASE_ANON_KEY,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ source: 'extension', payload })
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) return { ok: false, message: body.message || body.error || `Sync failed (${response.status}).` };
-
-  const now = new Date().toISOString();
-  await chrome.storage.local.set({ classPilotLastSync: now });
-  return { ok: true, ...body };
+  try {
+    const response = await fetch(SYNC_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${classPilotAccessToken}`, apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: 'extension', payload })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = body.message || body.error || `Sync failed (${response.status}).`;
+      await chrome.storage.local.set({ classPilotSyncError: message });
+      return { ok: false, message };
+    }
+    const now = new Date().toISOString();
+    await chrome.storage.local.set({ classPilotLastSync: now, classPilotSyncError: null });
+    return { ok: true, ...body };
+  } catch (error) {
+    const message = error?.message || 'Could not reach ClassPilot.';
+    await chrome.storage.local.set({ classPilotSyncError: message });
+    return { ok: false, message };
+  }
 }
 
-async function syncSchoologyTab(tabId) {
+// Start Schoology work without holding the popup's message channel open for
+// the entire calendar scrape. Completion is reported through chrome.storage.
+async function startSchoologySync(tabId) {
   if (!tabId) return { ok: false, message: 'No Schoology tab is available.' };
+  const auth = await getAuth();
+  if (!auth.classPilotAccessToken) return { ok: false, needsConnection: true, message: 'Connect to ClassPilot once.' };
   try {
-    return await chrome.tabs.sendMessage(tabId, { type: 'SYNC_NOW' });
+    // Intentionally do not await the response: the Schoology content script
+    // performs the long-running scrape and POST. Awaiting it makes the popup
+    // fragile when Chrome closes its message channel.
+    chrome.tabs.sendMessage(tabId, { type: 'SYNC_NOW' }).catch(() => {});
+    return { ok: true, started: true, message: 'Schoology sync started. Reading your calendar…' };
   } catch (_) {
-    return { ok: false, message: 'Refresh the Schoology tab once, then try again.' };
+    return { ok: false, message: 'Could not start Schoology sync. Refresh Schoology and try again.' };
   }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     if (message?.type === 'SET_AUTH') {
-      await chrome.storage.local.set({ classPilotAccessToken: message.accessToken, classPilotUserId: message.userId });
-      sendResponse({ ok: true });
-      return;
+      await chrome.storage.local.set({ classPilotAccessToken: message.accessToken, classPilotUserId: message.userId, classPilotSyncError: null });
+      sendResponse({ ok: true }); return;
     }
     if (message?.type === 'GET_STATE') {
       const auth = await getAuth();
-      sendResponse({ connected: Boolean(auth.classPilotAccessToken), lastSync: auth.classPilotLastSync || null });
-      return;
+      sendResponse({ connected: Boolean(auth.classPilotAccessToken), lastSync: auth.classPilotLastSync || null, syncError: auth.classPilotSyncError || null }); return;
     }
-    if (message?.type === 'CONNECT_CLASS_PILOT') {
-      sendResponse(await connectToClassPilot());
-      return;
-    }
-    if (message?.type === 'SCHOOLYOGY_DATA') {
-      sendResponse(await syncPayload(message.payload));
-      return;
-    }
+    if (message?.type === 'CONNECT_CLASS_PILOT') { sendResponse(await connectToClassPilot()); return; }
+    if (message?.type === 'SCHOOLYOGY_DATA') { sendResponse(await syncPayload(message.payload)); return; }
     if (message?.type === 'CONNECT_AND_SYNC') {
       let auth = await getAuth();
       if (!auth.classPilotAccessToken) {
@@ -89,13 +90,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (!connected.ok) { sendResponse(connected); return; }
         auth = await getAuth();
       }
-      sendResponse(await syncPayload(message.payload));
-      return;
+      sendResponse(await syncPayload(message.payload)); return;
     }
     if (message?.type === 'SYNC_ACTIVE_SCHOOLOGY') {
       const tabs = await chrome.tabs.query({ url: ['https://*.schoology.com/*', 'https://schoology.com/*'] });
-      sendResponse(await syncSchoologyTab(tabs[0]?.id));
-      return;
+      sendResponse(await startSchoologySync(tabs[0]?.id)); return;
     }
     sendResponse({ ok: false, message: 'Unknown request.' });
   })().catch(error => sendResponse({ ok: false, message: error?.message || 'Unexpected extension error.' }));
@@ -105,5 +104,5 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name !== SYNC_ALARM) return;
   const tabs = await chrome.tabs.query({ url: ['https://*.schoology.com/*', 'https://schoology.com/*'] });
-  if (tabs[0]?.id) await syncSchoologyTab(tabs[0].id);
+  if (tabs[0]?.id) await startSchoologySync(tabs[0].id);
 });
