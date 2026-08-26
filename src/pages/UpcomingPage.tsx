@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef } from 'react';
-import { CalendarDays, Check } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Assignment, Class } from '@/types';
 import { useData } from '@/context/DataContext';
 import { Card, CardHeader } from '@/components/ui/Card';
@@ -13,155 +13,63 @@ interface DayGroup {
   isToday: boolean;
   items: { assignment: Assignment; cls?: Class }[];
 }
-
+type CalendarView = 'daily' | 'weekly' | 'monthly';
 const DAY_MS = 86400000;
 const FUTURE_DAYS = 14;
 
-function startOfDay(value: Date) {
-  const date = new Date(value);
-  date.setHours(0, 0, 0, 0);
-  return date;
-}
+function startOfDay(value: Date) { const date = new Date(value); date.setHours(0, 0, 0, 0); return date; }
+function startOfWeek(value: Date) { const date = startOfDay(value); const day = date.getDay(); date.setDate(date.getDate() + (day === 0 ? -6 : 1 - day)); return date; }
+function sameDay(a: Date, b: Date) { return startOfDay(a).getTime() === startOfDay(b).getTime(); }
 
 export function UpcomingPage() {
   const { classes, assignments, loading, toggleComplete } = useData();
   const todayRef = useRef<HTMLDivElement | null>(null);
+  const [view, setView] = useState<CalendarView>('daily');
+  const [anchorDate, setAnchorDate] = useState(() => startOfDay(new Date()));
   const classById = useMemo(() => new Map(classes.map((c) => [c.id, c])), [classes]);
+  const today = useMemo(() => startOfDay(new Date()), []);
 
-  const days = useMemo<DayGroup[]>(() => {
-    const today = startOfDay(new Date());
+  const firstAssignmentDate = useMemo(() => assignments.filter(a => a.due_date).reduce<Date | null>((earliest, a) => { const due = startOfDay(new Date(a.due_date!)); return !earliest || due < earliest ? due : earliest; }, null), [assignments]);
 
-    // Start at the earliest assignment date instead of showing an arbitrary
-    // 30 days of empty calendar space. Completed assignments are still kept,
-    // so this naturally becomes the user's full assignment history.
-    const datedAssignments = assignments.filter((a) => Boolean(a.due_date));
-    const firstAssignmentDate = datedAssignments.reduce<Date | null>((earliest, a) => {
-      const due = startOfDay(new Date(a.due_date!));
-      return !earliest || due < earliest ? due : earliest;
-    }, null);
-
-    const start = firstAssignmentDate && firstAssignmentDate < today ? firstAssignmentDate : today;
-    const end = new Date(today.getTime() + FUTURE_DAYS * DAY_MS);
-    const totalDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / DAY_MS) + 1);
+  const getGroups = (start: Date, end: Date): DayGroup[] => {
     const groups: DayGroup[] = [];
-
-    for (let offset = 0; offset < totalDays; offset++) {
-      const date = new Date(start.getTime() + offset * DAY_MS);
-      const isToday = date.getTime() === today.getTime();
-      const diffFromToday = Math.round((date.getTime() - today.getTime()) / DAY_MS);
-      const label = isToday
-        ? 'Today'
-        : diffFromToday === -1
-          ? 'Yesterday'
-          : diffFromToday === 1
-            ? 'Tomorrow'
-            : date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-      groups.push({ date, label, isToday, items: [] });
+    for (let cursor = startOfDay(start); cursor <= end; cursor = new Date(cursor.getTime() + DAY_MS)) {
+      const date = new Date(cursor); const diff = Math.round((date.getTime() - today.getTime()) / DAY_MS);
+      const label = sameDay(date, today) ? 'Today' : diff === -1 ? 'Yesterday' : diff === 1 ? 'Tomorrow' : date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      groups.push({ date, label, isToday: sameDay(date, today), items: [] });
     }
-
-    const startTime = start.getTime();
-    for (const a of assignments) {
-      if (!a.due_date) continue;
-      const due = startOfDay(new Date(a.due_date));
-      const diff = Math.round((due.getTime() - startTime) / DAY_MS);
-      if (diff >= 0 && diff < groups.length) {
-        groups[diff].items.push({ assignment: a, cls: a.class_id ? classById.get(a.class_id) : undefined });
-      }
-    }
-
-    for (const g of groups) {
-      g.items.sort((a, b) => (a.assignment.due_date ?? '').localeCompare(b.assignment.due_date ?? ''));
-    }
+    const startTime = startOfDay(start).getTime();
+    assignments.forEach(a => { if (!a.due_date) return; const due = startOfDay(new Date(a.due_date)); const diff = Math.round((due.getTime() - startTime) / DAY_MS); if (diff >= 0 && diff < groups.length) groups[diff].items.push({ assignment: a, cls: a.class_id ? classById.get(a.class_id) : undefined }); });
+    groups.forEach(g => g.items.sort((a,b) => (a.assignment.due_date ?? '').localeCompare(b.assignment.due_date ?? '')));
     return groups;
-  }, [assignments, classById]);
+  };
 
-  // When the calendar opens, put today's section in view automatically so
-  // users can immediately see what needs attention without scrolling through history.
-  useEffect(() => {
-    if (!loading) {
-      requestAnimationFrame(() => {
-        todayRef.current?.scrollIntoView({ behavior: 'instant', block: 'start' });
-      });
-    }
-  }, [loading, days.length]);
+  const dailyDays = useMemo(() => { const start = firstAssignmentDate && firstAssignmentDate < today ? firstAssignmentDate : today; return getGroups(start, new Date(today.getTime() + FUTURE_DAYS * DAY_MS)); }, [assignments, classById, firstAssignmentDate, today]);
+  const weeklyDays = useMemo(() => { const start = startOfWeek(anchorDate); return getGroups(start, new Date(start.getTime() + 6 * DAY_MS)); }, [assignments, classById, anchorDate, today]);
+  const monthlyDays = useMemo(() => { const first = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1); const start = startOfWeek(first); const last = new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 0); const end = new Date(startOfWeek(new Date(last.getTime() + DAY_MS)).getTime() + 6 * DAY_MS); return getGroups(start, end); }, [assignments, classById, anchorDate, today]);
 
-  if (loading) {
-    return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
-  }
+  useEffect(() => { if (!loading && view === 'daily') requestAnimationFrame(() => todayRef.current?.scrollIntoView({ behavior: 'instant', block: 'start' })); }, [loading, view, dailyDays.length]);
+  useEffect(() => { if (view !== 'daily') setAnchorDate(today); }, [view, today]);
 
-  const total = assignments.filter((a) => !a.completed).length;
-  const hasCalendarItems = days.some((day) => day.items.length > 0);
+  if (loading) return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
+  const total = assignments.filter(a => !a.completed).length;
+  const hasCalendarItems = assignments.some(a => a.due_date);
 
-  return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="font-display text-2xl font-bold text-slate-900">Assignment calendar</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {total} open assignments. Scroll through your assignment history and what is coming next.
-        </p>
-      </div>
+  const AssignmentRow = ({ assignment, cls }: { assignment: Assignment; cls?: Class }) => {
+    const meta = CATEGORIES[assignment.category]; const overdue = !assignment.completed && isOverdue(assignment.due_date);
+    return <li className={`flex items-start gap-3 px-4 py-3 transition-colors hover:bg-slate-50 ${assignment.completed ? 'bg-slate-50/50' : ''}`}>
+      <button onClick={() => void toggleComplete(assignment)} aria-label={assignment.completed ? 'Mark assignment incomplete' : 'Mark assignment complete'} title={assignment.completed ? 'Mark incomplete' : 'Mark complete'} className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all ${assignment.completed ? 'border-slate-300 bg-slate-200 text-slate-500 hover:border-brand-500 hover:bg-brand-50' : 'border-slate-300 hover:border-brand-500'}`}>{assignment.completed && <Check className="h-3.5 w-3.5" />}</button>
+      <div className="min-w-0 flex-1"><div className="flex items-center gap-1.5"><span className={`truncate text-sm font-medium ${assignment.completed ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{assignment.title}</span>{overdue && <span className="shrink-0 rounded bg-rose-100 px-1 text-[10px] font-semibold text-rose-600">OVERDUE</span>}{assignment.completed && <span className="shrink-0 rounded bg-slate-100 px-1 text-[10px] font-semibold text-slate-500">COMPLETED</span>}</div><div className={`text-xs ${assignment.completed ? 'text-slate-400' : 'text-slate-500'}`}>{cls?.name ?? 'No class'} · {meta.short}</div></div>
+    </li>;
+  };
 
-      {!hasCalendarItems ? (
-        <EmptyState
-          icon={<CalendarDays className="h-6 w-6" />}
-          title="Nothing on the calendar"
-          description="You have no assignments with due dates in this window."
-        />
-      ) : (
-        <div className="space-y-3">
-          {days.map((day) => (
-            <div key={day.date.toISOString()} ref={day.isToday ? todayRef : undefined} className="scroll-mt-4">
-              <Card className={day.isToday ? 'ring-2 ring-brand-500/40' : ''}>
-                <CardHeader
-                  title={day.label}
-                  subtitle={day.items.length === 0 ? 'Nothing due' : `${day.items.length} ${day.items.length === 1 ? 'assignment' : 'assignments'}`}
-                />
-                {day.items.length > 0 ? (
-                  <ul className="divide-y divide-slate-100">
-                    {day.items.map(({ assignment, cls }) => {
-                      const meta = CATEGORIES[assignment.category];
-                      const overdue = !assignment.completed && isOverdue(assignment.due_date);
-                      return (
-                        <li
-                          key={assignment.id}
-                          className={`flex items-start gap-3 px-4 py-3 transition-colors hover:bg-slate-50 ${assignment.completed ? 'bg-slate-50/50' : ''}`}
-                        >
-                          <button
-                            onClick={() => void toggleComplete(assignment)}
-                            aria-label={assignment.completed ? 'Mark assignment incomplete' : 'Mark assignment complete'}
-                            title={assignment.completed ? 'Mark incomplete' : 'Mark complete'}
-                            className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all ${
-                              assignment.completed
-                                ? 'border-slate-300 bg-slate-200 text-slate-500 hover:border-brand-500 hover:bg-brand-50'
-                                : 'border-slate-300 hover:border-brand-500'
-                            }`}
-                          >
-                            {assignment.completed && <Check className="h-3.5 w-3.5" />}
-                          </button>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className={`truncate text-sm font-medium ${assignment.completed ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
-                                {assignment.title}
-                              </span>
-                              {overdue && <span className="shrink-0 rounded bg-rose-100 px-1 text-[10px] font-semibold text-rose-600">OVERDUE</span>}
-                              {assignment.completed && <span className="shrink-0 rounded bg-slate-100 px-1 text-[10px] font-semibold text-slate-500">COMPLETED</span>}
-                            </div>
-                            <div className={`text-xs ${assignment.completed ? 'text-slate-400' : 'text-slate-500'}`}>
-                              {cls?.name ?? 'No class'} · {meta.short}
-                            </div>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : (
-                  <div className="px-4 py-4 text-center text-xs text-slate-400">Free day</div>
-                )}
-              </Card>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  return <div className="space-y-5">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><h1 className="font-display text-2xl font-bold text-slate-900">Assignment calendar</h1><p className="mt-1 text-sm text-slate-500">{total} open assignments. See your work the way that makes the most sense for you.</p></div><div className="inline-flex w-fit rounded-xl border border-slate-200 bg-white p-1 shadow-sm" role="tablist" aria-label="Calendar view">{(['daily','weekly','monthly'] as CalendarView[]).map(option => <button key={option} role="tab" aria-selected={view === option} onClick={() => setView(option)} className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${view === option ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}>{option[0].toUpperCase()+option.slice(1)}</button>)}</div></div>
+    {!hasCalendarItems ? <EmptyState icon={<CalendarDays className="h-6 w-6" />} title="Nothing on the calendar" description="You have no assignments with due dates." /> : view === 'daily' ? <div className="space-y-3">{dailyDays.map(day => <div key={day.date.toISOString()} ref={day.isToday ? todayRef : undefined} className="scroll-mt-4"><Card className={day.isToday ? 'ring-2 ring-brand-500/40' : ''}><CardHeader title={day.label} subtitle={day.items.length === 0 ? 'Nothing due' : `${day.items.length} ${day.items.length === 1 ? 'assignment' : 'assignments'}`} />{day.items.length ? <ul className="divide-y divide-slate-100">{day.items.map(item => <AssignmentRow key={item.assignment.id} {...item} />)}</ul> : <div className="px-4 py-4 text-center text-xs text-slate-400">Free day</div>}</Card></div>)}</div> : view === 'weekly' ? <div className="space-y-4"><CalendarToolbar label={`${weeklyDays[0].date.toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${weeklyDays[6].date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`} onPrevious={() => setAnchorDate(d => new Date(d.getTime()-7*DAY_MS))} onNext={() => setAnchorDate(d => new Date(d.getTime()+7*DAY_MS))} onToday={() => setAnchorDate(today)} /><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">{weeklyDays.map(day => <WeekDay key={day.date.toISOString()} day={day} AssignmentRow={AssignmentRow} />)}</div></div> : <div className="space-y-4"><CalendarToolbar label={anchorDate.toLocaleDateString(undefined,{month:'long',year:'numeric'})} onPrevious={() => setAnchorDate(d => new Date(d.getFullYear(),d.getMonth()-1,1))} onNext={() => setAnchorDate(d => new Date(d.getFullYear(),d.getMonth()+1,1))} onToday={() => setAnchorDate(today)} /><Card className="overflow-hidden"><div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=><div key={d} className="px-2 py-2 text-center text-xs font-semibold text-slate-500">{d}</div>)}</div><div className="grid grid-cols-7">{monthlyDays.map(day=><div key={day.date.toISOString()} className={`min-h-28 border-b border-r border-slate-100 p-2 ${day.date.getMonth()!==anchorDate.getMonth()?'bg-slate-50/60':''} ${day.isToday?'bg-brand-50/40':''}`}><div className={`mb-2 flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${day.isToday?'bg-brand-600 text-white':day.date.getMonth()===anchorDate.getMonth()?'text-slate-700':'text-slate-300'}`}>{day.date.getDate()}</div><div className="space-y-1">{day.items.slice(0,3).map(({assignment})=><button key={assignment.id} onClick={()=>void toggleComplete(assignment)} title={assignment.title} className={`block w-full truncate rounded px-1.5 py-1 text-left text-[11px] ${assignment.completed?'bg-slate-100 text-slate-400 line-through':'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>{assignment.title}</button>)}{day.items.length>3&&<div className="px-1 text-[10px] font-medium text-slate-400">+{day.items.length-3} more</div>}</div></div>)}</div></Card></div>}
+    <p className="text-center text-xs text-slate-400">Completed work stays on your calendar so you can look back at what you finished.</p>
+  </div>;
 }
+
+function CalendarToolbar({ label, onPrevious, onNext, onToday }: { label: string; onPrevious: () => void; onNext: () => void; onToday: () => void }) { return <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm"><div className="flex items-center gap-1"><button onClick={onPrevious} aria-label="Previous" className="rounded-lg p-2 text-slate-500 hover:bg-slate-50 hover:text-slate-900"><ChevronLeft className="h-4 w-4" /></button><button onClick={onNext} aria-label="Next" className="rounded-lg p-2 text-slate-500 hover:bg-slate-50 hover:text-slate-900"><ChevronRight className="h-4 w-4" /></button></div><div className="text-sm font-semibold text-slate-800">{label}</div><button onClick={onToday} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50">Today</button></div>; }
+
+function WeekDay({ day, AssignmentRow }: { day: DayGroup; AssignmentRow: React.ComponentType<{ assignment: Assignment; cls?: Class }> }) { return <Card className={day.isToday ? 'ring-2 ring-brand-500/40' : ''}><CardHeader title={day.isToday ? 'Today' : day.date.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})} subtitle={day.items.length ? `${day.items.length} ${day.items.length===1?'assignment':'assignments'}` : 'Free day'} />{day.items.length ? <ul className="divide-y divide-slate-100">{day.items.map(item=><AssignmentRow key={item.assignment.id} {...item}/>)}</ul> : <div className="px-3 py-5 text-center text-xs text-slate-400">Nothing due</div>}</Card>; }
