@@ -4,21 +4,30 @@ export function startOfToday(): Date {
   return d;
 }
 
+/** Calendar-day difference in the user's local timezone.
+ * A due time later today is still 0 days away, not 1 day away just because
+ * it is more than 24 hours from the current clock time in another timezone.
+ */
 export function daysUntil(dateIso: string | null): number | null {
   if (!dateIso) return null;
   const due = new Date(dateIso);
-  const diff = due.getTime() - Date.now();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+  if (Number.isNaN(due.getTime())) return null;
+  const today = startOfToday();
+  const dueDay = new Date(due);
+  dueDay.setHours(0, 0, 0, 0);
+  return Math.round((dueDay.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 export function isOverdue(dateIso: string | null): boolean {
   if (!dateIso) return false;
-  return new Date(dateIso).getTime() < Date.now();
+  const due = new Date(dateIso);
+  return !Number.isNaN(due.getTime()) && due.getTime() < Date.now();
 }
 
 export function formatDue(dateIso: string | null): string {
   if (!dateIso) return 'No due date';
   const due = new Date(dateIso);
+  if (Number.isNaN(due.getTime())) return 'No due date';
   const days = daysUntil(dateIso);
   const time = due.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   if (days === null) return 'No due date';
