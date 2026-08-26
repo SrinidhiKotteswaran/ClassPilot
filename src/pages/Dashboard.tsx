@@ -38,33 +38,16 @@ export function Dashboard({ onNavigate }: { onNavigate: (r: Route) => void }) {
   const classById = useMemo(() => new Map(classes.map((c) => [c.id, c])), [classes]);
   const minutesAvailable = useMemo(() => availableMinutesToday(commitments), [commitments]);
   const ranked = useMemo(() => rankAssignments(assignments, classes), [assignments, classes]);
-
-  const todayAssignments = useMemo(
-    () => ranked.filter(({ assignment }) => isToday(assignment.due_date)),
-    [ranked],
-  );
-  const plan = useMemo(
-    () => buildTodayPlan(todayAssignments.map(({ assignment }) => assignment), classes, minutesAvailable),
-    [todayAssignments, classes, minutesAvailable],
-  );
-
+  const todayAssignments = useMemo(() => ranked.filter(({ assignment }) => isToday(assignment.due_date)), [ranked]);
+  const plan = useMemo(() => buildTodayPlan(todayAssignments.map(({ assignment }) => assignment), classes, minutesAvailable), [todayAssignments, classes, minutesAvailable]);
   const missing = useMemo(() => ranked.filter(({ assignment }) => {
     if (assignment.completed) return false;
     if (isOverdue(assignment.due_date)) return true;
     if (!assignment.is_missing) return false;
     return !assignment.due_date || new Date(assignment.due_date).getTime() <= Date.now();
   }), [ranked]);
-
-  const dueToday = useMemo(
-    () => assignments.filter((assignment) => !assignment.completed && isToday(assignment.due_date)).length,
-    [assignments],
-  );
-
-  const upcoming = useMemo(
-    () => ranked.filter(({ assignment }) => isFuture(assignment.due_date)).slice(0, 7),
-    [ranked],
-  );
-
+  const dueToday = useMemo(() => assignments.filter((assignment) => !assignment.completed && isToday(assignment.due_date)).length, [assignments]);
+  const upcoming = useMemo(() => ranked.filter(({ assignment }) => isFuture(assignment.due_date)).slice(0, 7), [ranked]);
   if (loading) return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
   const top = ranked[0];
   const authName = session?.user?.user_metadata?.full_name || session?.user?.user_metadata?.name;
@@ -80,10 +63,23 @@ export function Dashboard({ onNavigate }: { onNavigate: (r: Route) => void }) {
       <div className="space-y-6 lg:col-span-2">{missing.length > 0 && <Card><CardHeader title="Recover missing work" subtitle="Often the fastest grade boost" /><ul className="divide-y divide-slate-100">{missing.slice(0, 4).map(({ assignment }) => <li key={assignment.id} className="flex items-center gap-3 px-5 py-3"><button onClick={() => toggleComplete(assignment)} className="h-5 w-5 shrink-0 rounded-full border-2 border-rose-300 hover:border-rose-500" aria-label="Mark complete" /><span className="min-w-0 flex-1 truncate text-sm text-slate-800">{assignment.title}</span><span className="shrink-0 text-xs font-medium text-rose-600">{classById.get(assignment.class_id ?? '')?.name ?? 'No class'}</span></li>)}</ul></Card>}
         <Card><CardHeader title="Upcoming" action={<button onClick={() => onNavigate('upcoming')} className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-700">View <ArrowRight className="h-3.5 w-3.5" /></button>} />{upcoming.length === 0 ? <div className="px-5 py-8 text-center text-sm text-slate-500">No upcoming work.</div> : <ul className="divide-y divide-slate-100">{upcoming.map(({ assignment }) => <li key={assignment.id} className="flex items-center gap-3 px-5 py-2.5"><Clock className="h-4 w-4 shrink-0 text-slate-300" /><span className="min-w-0 flex-1 truncate text-sm text-slate-700">{assignment.title}</span><span className="shrink-0 text-xs text-slate-400">{formatDue(assignment.due_date)}</span></li>)}</ul>}</Card>
       </div></div>
-    <EmergencyModal open={emergency} onClose={() => setEmergency(false)} steps={ranked.slice(0, 3)} onToggle={toggleComplete} />
+    <EmergencyModal open={emergency} onClose={() => setEmergency(false)} steps={todayAssignments} onToggle={toggleComplete} />
   </div>;
 }
 
 function EmergencyModal({ open, onClose, steps, onToggle }: { open: boolean; onClose: () => void; steps: ReturnType<typeof rankAssignments>; onToggle: (a: import('@/types').Assignment) => void }) {
-  return <Modal open={open} onClose={onClose} title="Recovery plan"><p className="text-sm text-slate-600">Take a breath. Forget the full list for now — just do these, in order. Finish one, then look again.</p>{steps.length === 0 ? <p className="mt-4 text-sm text-slate-500">You have nothing open right now. You're okay.</p> : <ol className="mt-4 space-y-3">{steps.map(({ assignment, reasons }, i) => <li key={assignment.id} className="flex gap-3 rounded-xl bg-slate-50 p-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">{i + 1}</span><div className="min-w-0 flex-1"><div className="text-sm font-medium text-slate-900">{assignment.title}</div><div className="text-xs text-slate-500">{reasons[0] ?? 'Start here.'}</div></div><button onClick={() => onToggle(assignment)} className="shrink-0 self-center rounded-md px-2 py-1 text-xs font-medium text-brand-600 hover:bg-brand-50">Done</button></li>)}</ol>}</Modal>;
+  const todayCount = steps.length;
+  return <Modal open={open} onClose={onClose} title="You're not alone in this 💛">
+    <div className="space-y-4">
+      <div className="rounded-xl bg-rose-50 p-4">
+        <p className="text-sm font-semibold text-slate-900">Feeling overwhelmed by today's workload?</p>
+        <p className="mt-1 text-sm leading-6 text-slate-600">That's okay. You don't have to solve everything at once. Let's shrink the problem down to what actually needs your attention today.</p>
+      </div>
+      {todayCount === 0 ? <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">You have nothing due today. Take a breath — there is no need to tackle tomorrow's work right now.</div> : <>
+        <div><h3 className="font-display font-semibold text-slate-900">Just focus on today</h3><p className="mt-1 text-sm text-slate-500">Here are today's open assignments, ordered by priority. Ignore everything else for the moment.</p></div>
+        <ol className="space-y-3">{steps.map(({ assignment, score, reasons }, i) => { const pr = priorityLabel(score, assignment); return <li key={assignment.id} className="flex gap-3 rounded-xl border border-slate-100 bg-white p-3 shadow-sm"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">{i + 1}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium text-slate-900">{assignment.title}</span>{pr.label === 'Critical' && <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-medium ${pr.className}`}>Critical</span>}</div><div className="mt-1 text-xs text-slate-500">Due today · {formatMinutes(assignment.estimated_minutes)}{reasons[0] ? ` · ${reasons[0]}` : ''}</div></div><button onClick={() => onToggle(assignment)} className="shrink-0 self-center rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-100">Done</button></li>; })}</ol>
+        <p className="text-center text-xs text-slate-400">One assignment at a time. That's enough. 🌱</p>
+      </>}
+    </div>
+  </Modal>;
 }
