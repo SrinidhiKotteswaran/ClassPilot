@@ -54,16 +54,11 @@ async function syncPayload(payload) {
   }
 }
 
-// Start Schoology work without holding the popup's message channel open for
-// the entire calendar scrape. Completion is reported through chrome.storage.
 async function startSchoologySync(tabId) {
   if (!tabId) return { ok: false, message: 'No Schoology tab is available.' };
   const auth = await getAuth();
   if (!auth.classPilotAccessToken) return { ok: false, needsConnection: true, message: 'Connect to ClassPilot once.' };
   try {
-    // Intentionally do not await the response: the Schoology content script
-    // performs the long-running scrape and POST. Awaiting it makes the popup
-    // fragile when Chrome closes its message channel.
     chrome.tabs.sendMessage(tabId, { type: 'SYNC_NOW' }).catch(() => {});
     return { ok: true, started: true, message: 'Schoology sync started. Reading your calendar…' };
   } catch (_) {
