@@ -159,9 +159,6 @@
     return { doc: new DOMParser().parseFromString(await response.text(), 'text/html'), url: response.url || url };
   }
 
-  // Schoology's calendar can continue to show an assignment after it has been
-  // submitted. The assignment page is the authoritative source for the
-  // student's submission state, so verify candidates before importing them.
   async function isAssignmentSubmitted(item) {
     try {
       const { doc } = await fetchDoc(item.url);
@@ -173,13 +170,9 @@
 
       if (/\b(?:re-submit assignment|resubmit assignment|assignment submitted|submission details|view submission)\b/i.test(combined)) return true;
       if (/\bsubmitted!\b/i.test(combined)) return true;
-
-      // If Schoology explicitly exposes a submit action, the work is still open.
       if (/\bsubmit assignment\b/i.test(combined) && !/\b(?:re-submit|resubmit) assignment\b/i.test(combined)) return false;
       return false;
     } catch (_) {
-      // If a single assignment page cannot be read, keep the calendar item.
-      // A transient page failure must not make real upcoming work disappear.
       return false;
     }
   }
@@ -271,9 +264,11 @@
         if (!result?.ok) throw new Error(result?.message || 'Could not connect to ClassPilot.');
         status.textContent = `Synced ${result.classesImported ?? payload.courses.length} classes · ${(result.assignmentsImported ?? 0) + (result.assignmentsUpdated ?? 0)} upcoming items${result.assignmentsRemoved ? ` · removed ${result.assignmentsRemoved} completed` : ''}.`;
         sub.textContent = 'Connected · automatic sync on'; button.textContent = 'Sync now';
+        return result;
       } catch (error) {
         status.textContent = error instanceof Error ? error.message : 'Sync could not be completed.';
         sub.textContent = 'Needs attention'; button.textContent = 'Connect & sync';
+        return { ok: false, message: status.textContent };
       } finally {
         button.disabled = false;
         syncInFlight = null;
@@ -283,7 +278,19 @@
   }
 
   button.addEventListener('click', sync);
-  chrome.runtime.onMessage.addListener(message => { if (message?.type === 'SYNC_NOW') { sync(); return false; } });
+
+  // The extension popup/background asks the already-open Schoology tab to sync.
+  // This listener MUST return the async result; without sendResponse(),
+  // chrome.tabs.sendMessage() resolves with undefined and the popup reports
+  // "Could not sync Schoology" even though the sync is running.
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== 'SYNC_NOW') return false;
+    sync().then(result => sendResponse(result)).catch(error => {
+      sendResponse({ ok: false, message: error?.message || 'Schoology sync failed.' });
+    });
+    return true;
+  });
+
   sync();
   setInterval(sync, 10 * 60 * 1000);
 })();
