@@ -1,6 +1,6 @@
 const CLASS_PILOT_URL = 'https://class-pilot-sigma.vercel.app/';
 const SUPABASE_URL = 'https://ixolapnghbfpmspdpesn.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXAiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc4NzU5MzA1MiwiZXhwIjoyMTAzMTY5MDUyLCJzdXBhYmFzZV9wcm9qZWN0X3JlZiI6Iml4b2xhcG5naGJmcG1zcGRwZXNuIn0.yXfAIjKeSgKFY32thJ8wt7D_4EnI5BlrCnfuErwfbis';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml4b2xhcG5naGJmcG1zcGRwZXNuIiwiaWF0IjoxNzg3NTkzMDUyLCJleHAiOjIxMDMxNjkwNTJ9.yXfAIjKeSgKFY32thJ8wt7D_4EnI5BlrCnfuErwfbis';
 const SYNC_URL = `${SUPABASE_URL}/functions/v1/schoology-sync`;
 const SYNC_ALARM = 'classpilot-schoology-sync';
 
