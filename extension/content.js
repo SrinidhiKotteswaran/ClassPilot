@@ -100,8 +100,6 @@
       const dueAt = eventDate(a, pageMonth);
       const dueMs = dueAt ? Date.parse(dueAt) : NaN;
 
-      // Schoology Calendar is the source of truth. Only active calendar items
-      // whose due date has not passed are eligible for ClassPilot.
       if (!dueAt || Number.isNaN(dueMs) || dueMs < now - 60 * 60 * 1000) return;
       if (/\b(?:submitted|completed|turned in|already submitted)\b/i.test(nearby)) return;
 
@@ -175,6 +173,7 @@
     const [year, month] = calendarSeed.month.split('-').map(Number);
     const assignmentsById = new Map();
     let calendarWindowEnd = null;
+    let calendarMonthsFetched = 0;
     for (let offset = 0; offset < 3; offset += 1) {
       const monthDate = new Date(year, month - 1 + offset, 1);
       const key = monthKey(monthDate);
@@ -186,14 +185,18 @@
           ? { doc: document, url: location.href }
           : await fetchDoc(path);
         parseCalendarAssignments(result.doc, coursesById, key).forEach(item => assignmentsById.set(item.schoologyId, item));
+        calendarMonthsFetched += 1;
       } catch (_) {}
     }
+
+    if (calendarMonthsFetched < 1) throw new Error('Could not read your Schoology calendar.');
 
     return {
       courses,
       assignments: [...assignmentsById.values()],
       schoolName: location.hostname,
       calendarSync: true,
+      calendarMonthsFetched,
       calendarWindowEnd
     };
   }
