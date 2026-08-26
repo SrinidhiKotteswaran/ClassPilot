@@ -7,7 +7,7 @@ import { Card, CardHeader } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Modal';
-import { greeting, formatMinutes, formatDue, isOverdue } from '@/lib/format';
+import { greeting, motivation, formatMinutes, formatDue, isOverdue } from '@/lib/format';
 import { rankAssignments, priorityLabel } from '@/lib/priority';
 import { availableMinutesToday, buildTodayPlan } from '@/lib/planner';
 import { CATEGORIES } from '@/lib/categories';
@@ -39,8 +39,6 @@ export function Dashboard({ onNavigate }: { onNavigate: (r: Route) => void }) {
   const minutesAvailable = useMemo(() => availableMinutesToday(commitments), [commitments]);
   const ranked = useMemo(() => rankAssignments(assignments, classes), [assignments, classes]);
 
-  // Today's plan is intentionally limited to assignments due today. Upcoming
-  // work belongs in the separate Upcoming card instead of being duplicated here.
   const todayAssignments = useMemo(
     () => ranked.filter(({ assignment }) => isToday(assignment.due_date)),
     [ranked],
@@ -62,8 +60,6 @@ export function Dashboard({ onNavigate }: { onNavigate: (r: Route) => void }) {
     [assignments],
   );
 
-  // Upcoming starts after today and shows the next seven assignments. This
-  // keeps today's work in Today's plan and prevents duplicate entries.
   const upcoming = useMemo(
     () => ranked.filter(({ assignment }) => isFuture(assignment.due_date)).slice(0, 7),
     [ranked],
@@ -75,7 +71,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (r: Route) => void }) {
   const storedName = typeof authName === 'string' && authName.trim() ? authName.trim() : profile?.username?.trim() || '';
   const firstName = /^srinidhikotteswaran\d+$/i.test(storedName) ? 'Srinidhi' : storedName.split(/\s+/)[0] || 'there';
   return <div className="space-y-6">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="font-display text-2xl font-bold text-slate-900">{greeting()}, {firstName}</h1><p className="mt-1 text-sm text-slate-500">{ranked.length === 0 ? "You're all caught up. Add assignments to get a plan." : `You have ${ranked.length} open ${ranked.length === 1 ? 'task' : 'tasks'} and about ${formatMinutes(minutesAvailable)} free today.`}</p></div><Button variant="secondary" onClick={() => setEmergency(true)}><LifeBuoy className="h-4 w-4 text-rose-500" />I'm overwhelmed</Button></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="font-display text-2xl font-bold text-slate-900">{greeting()}, {firstName}! {greeting() === 'Good morning' ? '☀️' : greeting() === 'Good afternoon' ? '🌤️' : '🌙'}</h1><p className="mt-1 max-w-2xl text-sm text-slate-500">{motivation()}</p></div><Button variant="secondary" onClick={() => setEmergency(true)}><LifeBuoy className="h-4 w-4 text-rose-500" />I'm overwhelmed</Button></div>
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><Stat icon={<Trophy className="h-5 w-5" />} value={profile?.compass_points ?? 0} label="Compass Points" tone="bg-amber-50 text-amber-600" /><Stat icon={<Flame className="h-5 w-5" />} value={`${profile?.streak_count ?? 0}d`} label="Stress-free streak" tone="bg-orange-50 text-orange-500" /><Stat icon={<ListChecks className="h-5 w-5" />} value={dueToday} label="Due today" tone="bg-sky-50 text-sky-600" /><Stat icon={<AlertTriangle className="h-5 w-5" />} value={missing.length} label="Missing / overdue" tone="bg-rose-50 text-rose-600" /></div>
     {top && <Card className="overflow-hidden"><div className="flex items-start gap-3 bg-brand-50/60 px-5 py-4"><Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" /><div><div className="text-xs font-semibold uppercase tracking-wide text-brand-700">Recommended next</div><div className="mt-0.5 font-display font-semibold text-slate-900">{top.assignment.title}</div><p className="mt-1 text-sm text-slate-600">{top.reasons[0] ?? 'A good place to start.'}</p></div></div></Card>}
     <div className="grid gap-6 lg:grid-cols-5"><div className="lg:col-span-3"><Card><CardHeader title="Today's plan" subtitle={`Fits about ${formatMinutes(plan.totalMinutes)} of ${formatMinutes(minutesAvailable)} free time`} />{plan.blocks.length === 0 ? <div className="px-5 py-10 text-center text-sm text-slate-500">Nothing due today. You're clear for now.</div> : <ul className="divide-y divide-slate-100">{plan.blocks.map(({ assignment, reasons, score, fits }) => { const meta = CATEGORIES[assignment.category]; const pr = priorityLabel(score, assignment); return <li key={assignment.id} className="flex items-start gap-3 px-5 py-3"><button onClick={() => toggleComplete(assignment)} className="mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 border-slate-300 transition-colors hover:border-brand-500" aria-label="Mark complete" /><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-sm font-medium text-slate-900">{assignment.title}</span>{pr.label && <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-medium ${pr.className}`}>{pr.label}</span>}</div><p className="mt-0.5 text-xs text-slate-500">{reasons[0] ?? meta.label} · {formatMinutes(assignment.estimated_minutes)}{!fits && ' · beyond today’s free time'}</p></div><span className="shrink-0 text-xs text-slate-400">{formatDue(assignment.due_date)}</span></li>; })}</ul>}</Card></div>
