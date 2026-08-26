@@ -67,11 +67,34 @@ export function rankAssignments(assignments: Assignment[], classes: Class[]): Sc
   return assignments
     .filter((a) => !a.completed)
     .map((a) => scoreAssignment(a, a.class_id ? byId.get(a.class_id) : undefined))
-    .sort((x, y) => y.score - x.score);
+    .sort((x, y) => {
+      // For the student-facing order, deadline comes before grade-impact
+      // bonuses. Overdue work stays first, then the nearest due date.
+      const xTime = x.assignment.due_date ? new Date(x.assignment.due_date).getTime() : Number.POSITIVE_INFINITY;
+      const yTime = y.assignment.due_date ? new Date(y.assignment.due_date).getTime() : Number.POSITIVE_INFINITY;
+      if (xTime !== yTime) return xTime - yTime;
+      return y.score - x.score;
+    });
 }
 
-export function priorityLabel(score: number): { label: string; className: string } {
-  if (score >= 70) return { label: 'Critical', className: 'bg-rose-50 text-rose-700 ring-1 ring-rose-100' };
+export function priorityLabel(score: number, assignment?: Assignment): { label: string; className: string } {
+  if (assignment?.due_date) {
+    const days = daysUntil(assignment.due_date);
+    if (days === 0 && !assignment.is_missing && !isOverdue(assignment.due_date)) {
+      return { label: 'Critical', className: 'bg-rose-50 text-rose-700 ring-1 ring-rose-100' };
+    }
+    if (days !== null && days < 0) {
+      return { label: 'High', className: 'bg-amber-50 text-amber-700 ring-1 ring-amber-100' };
+    }
+    if (days === 1) {
+      return { label: 'High', className: 'bg-amber-50 text-amber-700 ring-1 ring-amber-100' };
+    }
+    if (days !== null && days <= 3) {
+      return { label: 'Medium', className: 'bg-sky-50 text-sky-700 ring-1 ring-sky-100' };
+    }
+    return { label: 'Low', className: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200' };
+  }
+
   if (score >= 45) return { label: 'High', className: 'bg-amber-50 text-amber-700 ring-1 ring-amber-100' };
   if (score >= 25) return { label: 'Medium', className: 'bg-sky-50 text-sky-700 ring-1 ring-sky-100' };
   return { label: 'Low', className: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200' };
