@@ -19,18 +19,26 @@
   const sub = root.querySelector('#cp-sub');
   const text = el => (el?.textContent || '').replace(/\s+/g, ' ').trim();
   const absolute = href => { try { return new URL(href, location.href).href; } catch { return null; } };
-  const courseId = href => String(href || '').match(/\/(?:course|section)\/(\d+)/i)?.[1] || null;
-  const assignmentId = href => String(href || '').match(/\/assignment\/(\d+)/i)?.[1] || null;
+  const courseId = href => String(href || '').match(/\/(?:course|section)\/(\d+)(?:[/?#]|$)/i)?.[1] || null;
+  const assignmentId = href => String(href || '').match(/\/assignment\/(\d+)(?:[/?#]|$)/i)?.[1] || null;
   const parseDate = value => { const parsed = Date.parse(value); return Number.isNaN(parsed) ? null : new Date(parsed).toISOString(); };
 
   function parseCourses(doc, baseUrl) {
     const out = new Map();
-    doc.querySelectorAll('a[href]').forEach(a => {
-      const href = absolute(a.getAttribute('href')); const id = courseId(href); if (!id) return;
-      const title = text(a) || id;
-      if (title.length < 2 || /^(home|materials|grades|calendar|members|more)$/i.test(title)) return;
-      out.set(id, { schoologyId: id, title: title.slice(0, 300), url: href });
+    const selectors = [
+      'a[href*="/course/"]', 'a[href*="/section/"]',
+      '[data-course-id]', '[data-section-id]', '[data-id][data-course]'
+    ].join(',');
+    doc.querySelectorAll(selectors).forEach(el => {
+      const href = el.getAttribute?.('href');
+      const dataId = el.getAttribute?.('data-course-id') || el.getAttribute?.('data-section-id');
+      const id = courseId(absolute(href)) || (dataId && /^\d+$/.test(dataId) ? dataId : null);
+      if (!id) return;
+      const title = text(el) || text(el.closest('[data-course-id], [data-section-id]')) || id;
+      if (title.length < 2 || /^(home|materials|grades|calendar|members|more|view course)$/i.test(title)) return;
+      out.set(id, { schoologyId: id, title: title.slice(0, 300), url: absolute(href) || `${location.origin}/course/${id}` });
     });
+
     const currentId = courseId(baseUrl);
     if (currentId && !out.has(currentId)) {
       const heading = text(doc.querySelector('h1, [role="heading"]')) || text(doc.querySelector('title')).replace(/\s*[|–-].*$/, '');
@@ -41,7 +49,7 @@
 
   function parseAssignments(doc, course) {
     const out = [];
-    doc.querySelectorAll('a[href]').forEach(a => {
+    doc.querySelectorAll('a[href*="/assignment/"]').forEach(a => {
       const href = absolute(a.getAttribute('href')); const id = assignmentId(href); if (!id) return;
       const title = text(a) || `Assignment ${id}`;
       const parent = a.closest('li, tr, article, .item, .material, .s-ext-list-item') || a.parentElement;
@@ -54,22 +62,27 @@
 
   async function fetchDoc(path) {
     const url = absolute(path);
-    const response = await fetch(url, { credentials: 'include' });
+    if (!url) throw new Error('Invalid Schoology URL.');
+    const response = await fetch(url, { credentials: 'include', headers: { Accept: 'text/html' } });
     if (!response.ok) throw new Error(`Schoology returned ${response.status}`);
-    return new DOMParser().parseFromString(await response.text(), 'text/html');
+    return { doc: new DOMParser().parseFromString(await response.text(), 'text/html'), url };
   }
 
   async function collect() {
-    const sources = [
-      { doc: document, url: location.href },
-      ...(location.pathname !== '/home/course-dashboard' ? [{ path: '/home/course-dashboard' }] : []),
-      ...(location.pathname !== '/home' ? [{ path: '/home' }] : [])
+    const sources = [{ doc: document, url: location.href }];
+    const candidatePaths = [
+      '/home/course-dashboard', '/home', '/courses', '/home/course-dashboard?view=all'
     ];
+    for (const path of candidatePaths) {
+      if (new URL(path, location.origin).pathname === location.pathname) continue;
+      sources.push({ path });
+    }
+
     const coursesById = new Map();
     for (const source of sources) {
       try {
-        const doc = source.doc || await fetchDoc(source.path);
-        parseCourses(doc, source.url || absolute(source.path)).forEach(course => coursesById.set(course.schoologyId, course));
+        const result = source.doc ? source : await fetchDoc(source.path);
+        parseCourses(result.doc, result.url).forEach(course => coursesById.set(course.schoologyId, course));
       } catch (_) {}
     }
 
@@ -77,24 +90,28 @@
     if (!courses.length) throw new Error('No Schoology classes were found. Open your Schoology home page and try again.');
 
     const assignmentsById = new Map();
-    for (const course of courses.slice(0, 50)) {
-      const paths = [course.url, `${new URL(course.url).pathname.replace(/\/$/, '')}/materials`];
+    for (const course of courses.slice(0, 100)) {
+      const coursePath = new URL(course.url, location.origin).pathname.replace(/\/$/, '');
+      const paths = [course.url, `${coursePath}/materials`, `${coursePath}/assignments`];
       for (const path of paths) {
         try {
-          const doc = path === location.href ? document : await fetchDoc(path);
-          parseAssignments(doc, course).forEach(item => assignmentsById.set(item.schoologyId, item));
+          const result = path === location.href ? { doc: document, url: path } : await fetchDoc(path);
+          parseAssignments(result.doc, course).forEach(item => assignmentsById.set(item.schoologyId, item));
         } catch (_) {}
       }
     }
 
+    // The Schoology home feed can contain assignments whose course page is not
+    // represented in the visible navigation. Recover the course from nearby
+    // course/section links before adding those assignments.
     try {
-      const home = location.pathname === '/home' ? document : await fetchDoc('/home');
-      home.querySelectorAll('a[href*="/assignment/"]').forEach(a => {
+      const homeResult = location.pathname === '/home' ? { doc: document, url: location.href } : await fetchDoc('/home');
+      homeResult.doc.querySelectorAll('a[href*="/assignment/"]').forEach(a => {
         const href = absolute(a.getAttribute('href')); const id = assignmentId(href); if (!id || assignmentsById.has(id)) return;
         const title = text(a) || `Assignment ${id}`;
-        const parent = a.closest('li, tr, article, .item') || a.parentElement;
+        const parent = a.closest('li, tr, article, .item, .s-ext-list-item') || a.parentElement;
         const nearby = text(parent);
-        const courseLink = parent?.querySelector('a[href*="/course/"]');
+        const courseLink = parent?.querySelector('a[href*="/course/"], a[href*="/section/"]');
         const courseSchoologyId = courseId(absolute(courseLink?.getAttribute('href')) || '') || '';
         const course = coursesById.get(courseSchoologyId); if (!course) return;
         const dateMatch = nearby.match(/(?:due|due date)[:\s]+([^|·]{3,80})/i);
@@ -109,6 +126,7 @@
     button.disabled = true; button.textContent = 'Syncing…'; status.textContent = 'Reading your Schoology classes and assignments…'; sub.textContent = 'Secure connection';
     try {
       const payload = await collect();
+      status.textContent = `Found ${payload.courses.length} classes and ${payload.assignments.length} assignments. Connecting…`;
       const result = await chrome.runtime.sendMessage({ type:'CONNECT_AND_SYNC', payload });
       if (!result?.ok) throw new Error(result?.message || 'Could not connect to ClassPilot.');
       status.textContent = `Synced ${result.classesImported ?? payload.courses.length} classes · ${(result.assignmentsImported ?? 0) + (result.assignmentsUpdated ?? 0)} assignments.`;
