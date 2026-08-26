@@ -43,9 +43,9 @@ const demoCommitments: Commitment[] = [
 function isSameDay(a: Date, b: Date): boolean { return a.toDateString() === b.toDateString(); }
 
 function compassPointsFor(a: Assignment): number {
-  // Compass Points reward progress, not grades: every completion is worth 10 points.
-  // Finishing something due today earns a small +5 focus bonus.
-  return 10 + (a.due_date && isSameDay(new Date(a.due_date), new Date()) ? 5 : 0);
+  // Compass Points are a small nudge, not a second grading system.
+  // Every completion earns 2 points; finishing something due today earns +1 focus bonus.
+  return 2 + (a.due_date && isSameDay(new Date(a.due_date), new Date()) ? 1 : 0);
 }
 
 async function seedDemoDataIfNeeded() {
@@ -83,30 +83,55 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const toggleComplete = useCallback(async (a: Assignment) => {
     const nowCompleting = !a.completed;
-    await data.updateAssignment(a.id, { completed: nowCompleting, completed_at: nowCompleting ? new Date().toISOString() : null, is_missing: nowCompleting ? false : a.is_missing });
+    const points = compassPointsFor(a);
 
-    if (nowCompleting && profile) {
+    await data.updateAssignment(a.id, {
+      completed: nowCompleting,
+      completed_at: nowCompleting ? new Date().toISOString() : null,
+      is_missing: nowCompleting ? false : a.is_missing,
+    });
+
+    if (profile) {
       const today = new Date();
-      const points = compassPointsFor(a);
-      let shouldAwardPoints = true;
+      let shouldChangePoints = false;
 
       if (DEMO_MODE || !supabase) {
-        // Demo mode has no durable event table, so keep its simple local profile behavior.
-        // The production path below is idempotent per assignment.
-        shouldAwardPoints = true;
-      } else {
+        shouldChangePoints = true;
+      } else if (nowCompleting) {
         const { data: pointEvent, error: pointEventError } = await supabase
           .from('compass_point_events')
-          .insert({ user_id: profile.id, assignment_id: a.id, points, reason: a.due_date && isSameDay(new Date(a.due_date), today) ? 'assignment_completed_due_today' : 'assignment_completed' })
+          .insert({
+            user_id: profile.id,
+            assignment_id: a.id,
+            points,
+            reason: a.due_date && isSameDay(new Date(a.due_date), today) ? 'assignment_completed_due_today' : 'assignment_completed',
+          })
           .select('id')
           .maybeSingle();
 
         if (pointEventError) {
-          // A duplicate event means this assignment already earned its points.
-          if (pointEventError.code === '23505') shouldAwardPoints = false;
+          if (pointEventError.code === '23505') shouldChangePoints = false;
           else throw pointEventError;
         } else {
-          shouldAwardPoints = !!pointEvent;
+          shouldChangePoints = !!pointEvent;
+        }
+      } else {
+        // Undoing completion also undoes the Compass Points earned for that completion.
+        // This makes the checkbox safely reversible without creating free points.
+        const { data: event, error: eventError } = await supabase
+          .from('compass_point_events')
+          .select('id, points')
+          .eq('user_id', profile.id)
+          .eq('assignment_id', a.id)
+          .maybeSingle();
+        if (eventError) throw eventError;
+        if (event) {
+          const { error: deleteError } = await supabase
+            .from('compass_point_events')
+            .delete()
+            .eq('id', event.id);
+          if (deleteError) throw deleteError;
+          shouldChangePoints = true;
         }
       }
 
@@ -123,13 +148,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
       } else if (last && isSameDay(last, yesterday)) {
         streak = Math.max(1, profile.streak_count) + 1;
       } else {
-        streak = 1;
+        streak = nowCompleting ? 1 : profile.streak_count;
       }
 
       const profileUpdate = {
-        compass_points: shouldAwardPoints ? profile.compass_points + points : profile.compass_points,
+        compass_points: Math.max(0, profile.compass_points + (nowCompleting ? (shouldChangePoints ? points : 0) : (shouldChangePoints ? -points : 0))),
         streak_count: streak,
-        last_completion_date: today.toISOString().slice(0, 10),
+        last_completion_date: nowCompleting ? today.toISOString().slice(0, 10) : profile.last_completion_date,
       };
 
       if (DEMO_MODE || !supabase) {
