@@ -54,9 +54,7 @@
     return match ? { userId: match[1], month: `${match[2]}-${match[3]}` } : null;
   }
 
-  function eventDate(anchor, doc, pageMonth) {
-    // Prefer Schoology's own date-bearing attributes. These are much safer than
-    // guessing a date from the visible text of a calendar cell.
+  function eventDate(anchor, pageMonth) {
     let node = anchor;
     for (let depth = 0; node && depth < 12; depth += 1, node = node.parentElement) {
       for (const attr of ['data-date', 'data-start', 'data-datetime', 'datetime', 'title']) {
@@ -67,8 +65,6 @@
       }
     }
 
-    // Schoology's month calendar normally places events inside a day <td>.
-    // If that cell exposes a date in its markup, use it.
     const cell = anchor.closest('td, [role="gridcell"], .fc-day, .calendar-day');
     if (cell) {
       for (const attr of ['data-date', 'data-day', 'data-start', 'datetime']) {
@@ -78,8 +74,6 @@
         if (parsed) return parsed;
       }
 
-      // Last-resort fallback: use the first standalone day number in the cell,
-      // combined with the month being viewed. Avoid interpreting times as days.
       const dayMatch = text(cell).match(/(?:^|\s)([1-9]|[12]\d|3[01])(?:\s|$)/);
       if (dayMatch) {
         const [year, month] = pageMonth.split('-').map(Number);
@@ -90,7 +84,7 @@
     return null;
   }
 
-  function parseCalendarAssignments(doc, baseUrl, coursesById, pageMonth) {
+  function parseCalendarAssignments(doc, coursesById, pageMonth) {
     const out = new Map();
     const links = [...doc.querySelectorAll('a[href*="/assignment/"]')];
     const now = Date.now();
@@ -103,12 +97,11 @@
       const title = text(a) || `Assignment ${id}`;
       const parent = a.closest('li, td, tr, article, [role="gridcell"], .item, .s-ext-list-item') || a.parentElement;
       const nearby = text(parent);
-      const dueAt = eventDate(a, doc, pageMonth);
+      const dueAt = eventDate(a, pageMonth);
       const dueMs = dueAt ? Date.parse(dueAt) : NaN;
 
-      // The calendar is the source of truth: only current/future calendar items
-      // are eligible. This prevents completed summer work and old course pages
-      // from becoming active ClassPilot tasks.
+      // Schoology Calendar is the source of truth. Only active calendar items
+      // whose due date has not passed are eligible for ClassPilot.
       if (!dueAt || Number.isNaN(dueMs) || dueMs < now - 60 * 60 * 1000) return;
       if (/\b(?:submitted|completed|turned in|already submitted)\b/i.test(nearby)) return;
 
@@ -145,10 +138,7 @@
     if (!url) throw new Error('Invalid Schoology URL.');
     const response = await fetch(url, { credentials: 'include', headers: { Accept: 'text/html' } });
     if (!response.ok) throw new Error(`Schoology returned ${response.status}`);
-    return {
-      doc: new DOMParser().parseFromString(await response.text(), 'text/html'),
-      url: response.url || url
-    };
+    return { doc: new DOMParser().parseFromString(await response.text(), 'text/html'), url: response.url || url };
   }
 
   async function collect() {
@@ -170,8 +160,6 @@
     const courses = [...coursesById.values()];
     if (!courses.length) throw new Error('No Schoology classes were found. Open your Schoology home page and try again.');
 
-    // Use Schoology's Calendar rather than course Materials/To Do pages. Fetch
-    // the current month plus the next two months so future work stays available.
     let calendarSeed;
     try {
       calendarSeed = calendarUserAndMonth(location.href);
@@ -186,19 +174,28 @@
 
     const [year, month] = calendarSeed.month.split('-').map(Number);
     const assignmentsById = new Map();
+    let calendarWindowEnd = null;
     for (let offset = 0; offset < 3; offset += 1) {
       const monthDate = new Date(year, month - 1 + offset, 1);
       const key = monthKey(monthDate);
+      const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59, 999);
+      calendarWindowEnd = monthEnd.toISOString();
       const path = `/calendar/${calendarSeed.userId}/${key}`;
       try {
         const result = offset === 0 && calendarUserAndMonth(location.href)?.month === key
           ? { doc: document, url: location.href }
           : await fetchDoc(path);
-        parseCalendarAssignments(result.doc, result.url, coursesById, key).forEach(item => assignmentsById.set(item.schoologyId, item));
+        parseCalendarAssignments(result.doc, coursesById, key).forEach(item => assignmentsById.set(item.schoologyId, item));
       } catch (_) {}
     }
 
-    return { courses, assignments: [...assignmentsById.values()], schoolName: location.hostname };
+    return {
+      courses,
+      assignments: [...assignmentsById.values()],
+      schoolName: location.hostname,
+      calendarSync: true,
+      calendarWindowEnd
+    };
   }
 
   async function sync() {
