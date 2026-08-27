@@ -75,43 +75,34 @@ export function Dashboard({ onNavigate }: { onNavigate: (r: Route) => void }) {
 
 const ENCOURAGEMENTS = [
   { text: 'There is no secret ingredient. It’s just you. 🐼✨', source: '🥟 Kung Fu Panda — Po' },
-  { text: 'Skadoosh. 🐼💥 One assignment. One move. You’ve got this.', source: '🥋 Kung Fu Panda energy' },
-  { text: 'Baddies never give up. They lock in and slay. 💅✨👑🔥', source: '💖 Certified lock-in moment' },
-  { text: 'POV: you thought you were cooked… but then you locked in. 😭🔥🫡', source: '📈 The comeback arc starts now' },
-  { text: 'Okay bestie. Deep breath. Pick ONE. We move. 🫡💗✨', source: '📱 Gen-Z study mode activated' },
-  { text: 'This is your training montage. 🎬🏃‍♀️🎶 Put the soundtrack on and start with one thing.', source: '⭐ Main-character mode' },
-  { text: 'Future you is going to be SO glad you started this one. 🌱✨🥹', source: '⏳ A message from future you' },
-  { text: 'Tung tung tung sahur has arrived. 🥁😭 It is time to LOCK IN. 📚🔥', source: '🧠 Brainrot-powered productivity' },
-  { text: 'Two twos, my word. ✌️😤 One assignment at a time and we are SO back. 🔥📈', source: '🔒 Lock-in protocol' },
-  { text: 'Plot twist: you are actually capable of doing this. 🫵💫🎬', source: '🍿 The plot thickens' },
-  { text: 'Tiny progress is still progress. 🌱💛 You do not have to do it all at once.', source: '✨ Keep going' },
-  { text: 'You’re not behind. You’re here. That counts. 🫶✨', source: '👣 Take the next small step' },
+  { text: 'Yesterday is history, tomorrow is a mystery, but today is a gift. That is why it is called the present. 🎁🐼✨', source: '🥟 Kung Fu Panda — Oogway' },
 
   { text: 'Spots on! 🐞✨ Time to transform this chaos into progress. One task at a time, superhero. 💪📚', source: '🐞 Miraculous: Tales of Ladybug & Cat Noir' },
-  { text: 'Miraculous reminder: even superheroes have messy days. 🐞🐈‍⬛💥 You still show up and try again. 💖', source: '✨ Miraculous energy' },
-  { text: 'Claws out! 🐈‍⬛⚡ Time to cataclysm that procrastination and get ONE thing done. 😭📚', source: '🐈‍⬛ Miraculous: Cat Noir mode' },
-  { text: 'Lucky Charm! 🍀🐞✨ Your lucky object today is… starting the assignment. 😭🫡', source: '🐞 Miraculous reference — obviously' },
+  { text: 'Lucky Charm! 🍀🐞✨ Your lucky object today is… starting the assignment. 😭🫡', source: '🐞 Miraculous — Ladybug energy' },
+  { text: 'Claws out! 🐈‍⬛⚡ Time to cataclysm that procrastination and get ONE thing done. 😭📚', source: '🐈‍⬛ Miraculous — Cat Noir mode' },
 
-  { text: 'The ninja never quit the mission. 🥷🔥 Start small, stay focused, and keep moving.', source: '🐉 NINJAGO — ninja wisdom' },
-  { text: 'Ninja, GO! 🥷⚡📚 The assignment does not stand a chance against a proper lock-in session.', source: '🐲 LEGO NINJAGO energy' },
-  { text: 'You do not need to master the whole spinjitzu of school today. 🌀😭 Just do the next thing.', source: '🥷 NINJAGO-inspired wisdom' },
+  { text: 'The best way to defeat an enemy is to make them your friend. 🥷✨', source: '🐉 LEGO NINJAGO' },
+  { text: 'Ninja, GO! 🥷⚡📚 The assignment does not stand a chance against a proper lock-in session.', source: '🐉 LEGO NINJAGO' },
+  { text: 'The ninja never quit the mission. 🥷🔥 Start small, stay focused, and keep moving.', source: '🐉 NINJAGO energy' },
 
-  { text: 'Wicked. 😤🔥 You are not stopping in the middle of the maze now. Keep moving.', source: '🏃‍♂️ The Maze Runner vibes' },
-  { text: 'One step. Then another. Then suddenly you’re further through the maze than you thought. 🏃‍♀️🧩✨', source: '🟢 Maze Runner-inspired' },
+  { text: 'WICKED is good… but getting your work done is probably better. 😭🏃‍♀️🔥', source: '🏃 The Maze Runner' },
+  { text: 'One step. Then another. Then suddenly you’re further through the maze than you thought. 🏃‍♀️🧩✨', source: '🏃 The Maze Runner' },
 
-  { text: 'Mischief managed… eventually. 🪄📚 First, we actually have to start. 😭✨', source: '⚡ Harry Potter world' },
-  { text: 'Accio motivation! 🪄✨📚 Okay, it arrived. Now use it on ONE assignment. 🫡', source: '🧙 Harry Potter reference' },
-  { text: 'Even at Hogwarts, you would still have homework. 😭🪄 So let’s get this done, wizard. ✨', source: '⚡ Hogwarts student survival guide' },
+  { text: 'It does not do to dwell on dreams and forget to live. 🪄✨', source: '⚡ Harry Potter — Dumbledore' },
+  { text: 'Mischief managed… eventually. 🪄📚 First, we actually have to start. 😭✨', source: '⚡ Harry Potter' },
+  { text: 'Accio motivation! 🪄✨📚 Okay, it arrived. Now use it on ONE assignment. 🫡', source: '⚡ Harry Potter' },
 
-  { text: 'Whatever it takes. 🫡⚡ One task at a time, Avenger. 💥📚', source: '🦸 Avengers energy' },
-  { text: 'Assemble your supplies. 🦸‍♀️💻📚 Water? Check. Brain? Loading. Mission? Start ONE assignment. 💥', source: '⚡ Avengers: Lock-In Initiative' },
-  { text: 'You have the focus of a superhero loading… ███████░░░ 80% 😭⚡ Keep going.', source: '🦸 Marvel-style motivation' },
+  { text: 'Whatever it takes. 🫡⚡ One task at a time, Avenger. 💥📚', source: '🦸 Avengers: Endgame' },
+  { text: 'I can do this all day. 💪🛡️ …Or at least until I finish this assignment. 😭📚', source: '🦸 Captain America' },
+  { text: 'Assemble your supplies. 🦸‍♀️💻📚 Water? Check. Brain? Loading. Mission? Start ONE assignment. 💥', source: '🦸 The Avengers' },
 
-  { text: 'The comeback arc is giving season finale energy. 🎬🔥 Do NOT leave the viewers on a cliffhanger. 😭✨', source: '📺 TV-show protagonist mode' },
-  { text: 'Your character development episode is happening RIGHT NOW. 😭🎥📈 Lock in.', source: '🍿 Main-character television moment' },
-  { text: 'Cue the dramatic music. 🎶😤 You are about to do something mildly inconvenient and absolutely survive. 💅🔥', source: '📺 Sitcom protagonist energy' },
-  { text: 'No montage skips. 🎬✨ The hero still has to do the homework. Unfortunately. 😭📚', source: '🎥 Movie logic, sadly' },
-  { text: 'Today’s episode: “They Locked In.” 📺🔥 Spoiler alert: you make progress. 🫡✨', source: '🍿 Coming soon to your comeback arc' },
+  { text: 'Just keep swimming. 🐠🌊💙 Just keep going, one assignment at a time.', source: '🐠 Finding Nemo — Dory' },
+  { text: 'To infinity and beyond! 🚀✨ …After we finish the homework. 😭📚', source: '🤠 Toy Story — Buzz Lightyear' },
+  { text: 'Remember, you’re the one who can fill the world with sunshine. ☀️✨', source: '🌈 Snow White' },
+
+  { text: 'The comeback arc is giving season finale energy. 🎬🔥 Do NOT leave the viewers on a cliffhanger. 😭✨', source: '📺 Main-character energy' },
+  { text: 'Baddies never give up. They lock in and slay. 💅✨👑🔥', source: '💖 Gen-Z lock-in energy' },
+  { text: 'POV: you thought you were cooked… but then you locked in. 😭🔥🫡', source: '📱 TikTok comeback arc' },
 ];
 
 function EmergencyModal({ open, onClose, steps, onToggle, encouragement }: { open: boolean; onClose: () => void; steps: ReturnType<typeof rankAssignments>; onToggle: (a: import('@/types').Assignment) => void; encouragement: { text: string; source: string } }) {
