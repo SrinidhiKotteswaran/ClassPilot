@@ -21,7 +21,6 @@
   const absolute = href => { try { return new URL(href, location.href).href; } catch { return null; } };
   const courseId = href => String(href || '').match(/\/(?:course|section)\/(\d+)(?:[/?#]|$)/i)?.[1] || null;
   const assignmentId = href => String(href || '').match(/\/assignment\/(\d+)(?:[/?#]|$)/i)?.[1] || null;
-  const calendarPath = value => String(value || '').match(/\/calendar\/(\d+)\/(\d{4})-(\d{2})(?:[/?#]|$)/i);
 
   function parseDate(value) {
     if (value === null || value === undefined || value === '') return null;
@@ -44,131 +43,115 @@
       .replace(/\s+/g, ' ')
       .replace(/^\s*[•·|:-]+\s*/, '')
       .replace(/\s+(materials|grades|calendar|members|more)\s*$/i, '')
-      .trim()
-      .slice(0, 300);
+      .trim().slice(0, 300);
   }
 
-  // Schoology's course dashboard is preferred, but some schools only render a
-  // subset of enrolled sections there. We also recover course identities from
-  // the actual upcoming assignment cards below. This avoids losing valid classes
-  // merely because Schoology's dashboard DOM is incomplete.
+  function addCourse(out, id, title, url) {
+    if (!id) return;
+    const cleaned = cleanCourseTitle(title);
+    if (!looksLikeRealCourseTitle(cleaned)) return;
+    const existing = out.get(id);
+    if (!existing || (existing.title.startsWith('Schoology class ') && cleaned.length > 0)) {
+      out.set(id, { schoologyId: id, title: cleaned, url: url || `${location.origin}/course/${id}` });
+    }
+  }
+
   function parseCourses(doc, baseUrl) {
     const out = new Map();
-    const selectors = [
-      'a[href*="/course/"]',
-      '[data-course-id]',
-      '[data-section-id]'
-    ].join(',');
-
-    doc.querySelectorAll(selectors).forEach(el => {
+    doc.querySelectorAll('a[href*="/course/"], a[href*="/section/"], [data-course-id], [data-section-id]').forEach(el => {
       const href = el.getAttribute?.('href');
       const dataId = el.getAttribute?.('data-course-id') || el.getAttribute?.('data-section-id');
       const id = courseId(absolute(href)) || (dataId && /^\d+$/.test(dataId) ? dataId : null);
       if (!id) return;
-
-      let title = cleanCourseTitle(text(el));
-      if (!looksLikeRealCourseTitle(title)) return;
-
-      out.set(id, {
-        schoologyId: id,
-        title,
-        url: absolute(href) || `${location.origin}/course/${id}`
-      });
+      addCourse(out, id, text(el), absolute(href) || `${location.origin}/course/${id}`);
     });
 
     const currentId = courseId(baseUrl);
     if (currentId && !out.has(currentId)) {
       const heading = cleanCourseTitle(text(doc.querySelector('h1, [role="heading"]')) || text(doc.querySelector('title')).replace(/\s*[|–-].*$/, ''));
-      if (looksLikeRealCourseTitle(heading)) out.set(currentId, { schoologyId: currentId, title: heading, url: baseUrl });
+      addCourse(out, currentId, heading, baseUrl);
     }
     return [...out.values()];
   }
 
-  function calendarUserAndMonth(url) {
-    const match = calendarPath(url);
-    return match ? { userId: match[1], month: `${match[2]}-${match[3]}` } : null;
-  }
+  function findCourseInEvent(event, coursesById) {
+    if (!event) return '';
+    const courseLink = event.querySelector('a[href*="/course/"], a[href*="/section/"]');
+    const linkedId = courseId(absolute(courseLink?.getAttribute('href')) || '');
+    if (linkedId) return linkedId;
 
-  function eventDate(anchor, pageMonth) {
-    let node = anchor;
-    for (let depth = 0; node && depth < 12; depth += 1, node = node.parentElement) {
-      for (const attr of ['data-date', 'data-start', 'data-datetime', 'datetime', 'title']) {
-        const value = node.getAttribute?.(attr);
-        if (!value) continue;
-        const parsed = parseDate(value);
-        if (parsed) return parsed;
+    const courseText = text(event.querySelector('.realm-title-course, .realm-title-course-csl, [class*="course-title"], [class*="course-name"]'));
+    if (courseText) {
+      const match = courseText.match(/:\s*(\d+)\s*\d*\s+(.+?)(?:\s{2,}|$)/);
+      if (match) {
+        const candidateId = match[1];
+        if (coursesById.has(candidateId)) return candidateId;
+        const candidateTitle = cleanCourseTitle(match[2]);
+        addCourse(coursesById, candidateId, candidateTitle, `${location.origin}/course/${candidateId}`);
+        return candidateId;
       }
-      const numericDay = node.getAttribute?.('data-day');
-      if (numericDay && /^\d{1,2}$/.test(numericDay) && pageMonth) {
-        const [year, month] = pageMonth.split('-').map(Number);
-        const candidate = new Date(year, month - 1, Number(numericDay), 23, 59, 59);
-        if (!Number.isNaN(candidate.getTime())) return candidate.toISOString();
-      }
+      const normalized = courseText.toLowerCase();
+      const found = [...coursesById.values()].find(c => normalized.includes(c.title.toLowerCase()));
+      if (found) return found.schoologyId;
     }
-    return null;
+
+    const nearby = text(event);
+    const normalized = nearby.toLowerCase();
+    const found = [...coursesById.values()]
+      .sort((a, b) => b.title.length - a.title.length)
+      .find(c => normalized.includes(c.title.toLowerCase()));
+    return found?.schoologyId || '';
   }
 
-  function parseCalendarAssignments(doc, coursesById, pageMonth) {
-    const out = new Map();
-    const links = [...doc.querySelectorAll('a[href*="/assignment/"]')];
-    const now = Date.now();
+  function extractDueFromText(value) {
+    const s = String(value || '').replace(/\s+/g, ' ').trim();
+    const match = s.match(/Due\s+(?:on\s+)?((?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+[A-Za-z]+\s+\d{1,2},\s+\d{4})(?:\s+at\s+([0-9]{1,2}:[0-9]{2}\s*(?:AM|PM)))?/i);
+    if (!match) return null;
+    const parsed = parseDate(`${match[1]} ${match[2] || '11:59 PM'}`);
+    return parsed;
+  }
 
-    links.forEach(a => {
+  function parseAssignmentLinks(doc, coursesById) {
+    const out = new Map();
+    const now = Date.now();
+    doc.querySelectorAll('a[href*="/assignment/"]').forEach(a => {
       const href = absolute(a.getAttribute('href'));
       const id = assignmentId(href);
       if (!id) return;
-
-      const title = text(a) || `Assignment ${id}`;
-      const event = a.closest('.upcoming-event, [data-start], li, td, tr, article, [role="gridcell"], .item, .s-ext-list-item');
+      const event = a.closest('.upcoming-event, .upcoming-item, .sExtlink, li, td, tr, article, [role="gridcell"], .item, .s-ext-list-item, .s-todo-item') || a.parentElement;
       const nearby = text(event || a.parentElement);
-      const dueAt = eventDate(a, pageMonth);
-      const dueMs = dueAt ? Date.parse(dueAt) : NaN;
+      let dueAt = null;
 
-      if (!dueAt || Number.isNaN(dueMs) || dueMs < now - 60 * 60 * 1000) return;
-
-      let courseSchoologyId = '';
-      const courseLink = event?.querySelector?.('a[href*="/course/"]');
-      courseSchoologyId = courseId(absolute(courseLink?.getAttribute('href')) || '') || '';
-
-      // Recover the class directly from the assignment card when the course
-      // dashboard did not expose that class. This is especially important for
-      // schools where only some active sections appear in /home/course-dashboard.
-      if (courseSchoologyId && !coursesById.has(courseSchoologyId)) {
-        const rawCourseText = text(event?.querySelector?.('.realm-title-course, .realm-title-course-csl, [class*="course-title"]')) || '';
-        const fallbackTitle = cleanCourseTitle(rawCourseText.replace(/^.*?:\s*\d+\s*\d*\s*/i, ''));
-        const title = looksLikeRealCourseTitle(fallbackTitle) ? fallbackTitle : cleanCourseTitle(courseLink?.textContent || '');
-        coursesById.set(courseSchoologyId, {
-          schoologyId: courseSchoologyId,
-          title: looksLikeRealCourseTitle(title) ? title : `Schoology class ${courseSchoologyId}`,
-          url: absolute(courseLink?.getAttribute('href')) || `${location.origin}/course/${courseSchoologyId}`
-        });
+      let node = a;
+      for (let depth = 0; node && depth < 14; depth += 1, node = node.parentElement) {
+        for (const attr of ['data-date', 'data-start', 'data-datetime', 'datetime', 'title']) {
+          const value = node.getAttribute?.(attr);
+          const parsed = parseDate(value);
+          if (parsed) { dueAt = parsed; break; }
+        }
+        if (dueAt) break;
       }
+      if (!dueAt) dueAt = extractDueFromText(nearby);
+      if (!dueAt) return;
+      const dueMs = Date.parse(dueAt);
+      if (Number.isNaN(dueMs) || dueMs < now - 60 * 60 * 1000) return;
 
-      if (!courseSchoologyId) {
-        const normalized = nearby.toLowerCase();
-        const match = [...coursesById.values()]
-          .sort((a, b) => b.title.length - a.title.length)
-          .find(course => normalized.includes(course.title.toLowerCase()));
-        courseSchoologyId = match?.schoologyId || '';
-      }
-
+      const courseSchoologyId = findCourseInEvent(event, coursesById);
       if (!courseSchoologyId || !coursesById.has(courseSchoologyId)) return;
-      const course = coursesById.get(courseSchoologyId);
 
       out.set(id, {
         schoologyId: id,
         courseSchoologyId,
-        title: title.slice(0, 500),
+        title: text(a).slice(0, 500) || `Assignment ${id}`,
         description: nearby.slice(0, 1000),
         dueAt,
         category: 'preparatory',
         pointsValue: 0,
         isMissing: /\bmissing\b/i.test(nearby),
         url: href,
-        source: 'calendar'
+        source: 'schoology'
       });
     });
-
     return [...out.values()];
   }
 
@@ -182,60 +165,54 @@
 
   async function collect() {
     const coursesById = new Map();
-
-    try {
-      const dashboard = await fetchDoc('/home/course-dashboard');
-      parseCourses(dashboard.doc, dashboard.url).forEach(course => coursesById.set(course.schoologyId, course));
-    } catch (_) {}
-
-    if (!coursesById.size) parseCourses(document, location.href).forEach(course => coursesById.set(course.schoologyId, course));
-
     const assignmentsById = new Map();
-    const currentSeed = calendarUserAndMonth(location.href);
 
-    // Parse the loaded Schoology page first. As assignment cards are processed,
-    // any course links they contain are added to coursesById before validation.
-    parseCalendarAssignments(document, coursesById, currentSeed?.month || monthKey(new Date()))
-      .forEach(item => assignmentsById.set(item.schoologyId, item));
+    // Pull course identities from multiple Schoology surfaces. Course Dashboard
+    // can be incomplete for a student's active sections, so never treat its list
+    // as authoritative by itself.
+    const coursePaths = ['/home/course-dashboard', '/courses', '/home'];
+    for (const path of coursePaths) {
+      try {
+        const result = path === '/home' && location.pathname === '/home'
+          ? { doc: document, url: location.href }
+          : await fetchDoc(path);
+        parseCourses(result.doc, result.url).forEach(course => coursesById.set(course.schoologyId, course));
+        parseAssignmentLinks(result.doc, coursesById).forEach(item => assignmentsById.set(item.schoologyId, item));
+      } catch (_) {}
+    }
 
-    let calendarSeed = currentSeed;
+    // Always parse the currently visible Schoology document too; this catches
+    // To Do cards and assignment widgets that are not present in fetched pages.
+    parseCourses(document, location.href).forEach(course => coursesById.set(course.schoologyId, course));
+    parseAssignmentLinks(document, coursesById).forEach(item => assignmentsById.set(item.schoologyId, item));
+
+    // Calendar is used as a second assignment source. Keep the next three months
+    // so a sync from any Schoology page does not lose upcoming work.
     try {
-      if (!calendarSeed) {
-        const calendarResult = await fetchDoc('/calendar');
-        calendarSeed = calendarUserAndMonth(calendarResult.url)
-          || calendarUserAndMonth([...calendarResult.doc.querySelectorAll('a[href*="/calendar/"]')].map(a => a.href).find(Boolean));
+      const calendar = await fetchDoc('/calendar');
+      const href = [...calendar.doc.querySelectorAll('a[href*="/calendar/"]')].map(a => absolute(a.getAttribute('href'))).find(Boolean) || calendar.url;
+      const match = href.match(/\/calendar\/(\d+)\/(\d{4})-(\d{2})/i);
+      if (match) {
+        const userId = match[1];
+        const start = new Date(Number(match[2]), Number(match[3]) - 1, 1);
+        for (let offset = 0; offset < 3; offset += 1) {
+          const d = new Date(start.getFullYear(), start.getMonth() + offset, 1);
+          const key = monthKey(d);
+          try {
+            const result = offset === 0 && /\/calendar\/\d+\/\d{4}-\d{2}/i.test(location.pathname)
+              ? { doc: document }
+              : await fetchDoc(`/calendar/${userId}/${key}`);
+            parseAssignmentLinks(result.doc, coursesById).forEach(item => assignmentsById.set(item.schoologyId, item));
+          } catch (_) {}
+        }
       }
     } catch (_) {}
-
-    let calendarMonthsFetched = 0;
-    let calendarWindowEnd = null;
-
-    if (calendarSeed) {
-      const [year, month] = calendarSeed.month.split('-').map(Number);
-      for (let offset = 0; offset < 3; offset += 1) {
-        const monthDate = new Date(year, month - 1 + offset, 1);
-        const key = monthKey(monthDate);
-        const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59, 999);
-        calendarWindowEnd = monthEnd.toISOString();
-
-        try {
-          const result = offset === 0 && currentSeed?.month === key
-            ? { doc: document }
-            : await fetchDoc(`/calendar/${calendarSeed.userId}/${key}`);
-          parseCalendarAssignments(result.doc, coursesById, key)
-            .forEach(item => assignmentsById.set(item.schoologyId, item));
-          calendarMonthsFetched += 1;
-        } catch (_) {}
-      }
-    }
 
     return {
       courses: [...coursesById.values()],
       assignments: [...assignmentsById.values()],
       schoolName: location.hostname,
-      calendarSync: true,
-      calendarMonthsFetched,
-      calendarWindowEnd
+      calendarSync: true
     };
   }
 
@@ -245,7 +222,7 @@
     syncInFlight = (async () => {
       button.disabled = true;
       button.textContent = 'Syncing…';
-      status.textContent = 'Reading your Schoology calendar…';
+      status.textContent = 'Reading your Schoology courses and assignments…';
       sub.textContent = 'Secure connection';
       try {
         const payload = await collect();
