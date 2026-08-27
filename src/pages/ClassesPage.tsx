@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react';
 import { Plus, BookOpen, Target, Trash2, Calculator } from 'lucide-react';
 import type { Class } from '@/types';
 import { useData } from '@/context/DataContext';
-import { Card, CardHeader } from '@/components/ui/Card';
+import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Field, Input, Select } from '@/components/ui/Field';
+import { Field, Input } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { Spinner, EmptyState } from '@/components/ui/Feedback';
 import * as data from '@/services/data';
@@ -22,15 +22,23 @@ function colorDot(c: string): string {
   return COLORS.find((x) => x.value === c)?.class ?? 'bg-slate-400';
 }
 
+function isPlaceholderClass(cls: Class): boolean {
+  // Schoology can expose bare "Section 1" navigation entries as if they were
+  // courses. Never hide a genuinely named class such as "Class of 2027: Section 1".
+  return /^section\s*\d+$/i.test(String(cls.name || '').trim());
+}
+
 export function ClassesPage() {
   const { classes, assignments, loading, reload } = useData();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Class | null>(null);
   const [calcClass, setCalcClass] = useState<Class | null>(null);
 
+  const visibleClasses = useMemo(() => classes.filter((c) => !isPlaceholderClass(c)), [classes]);
+
   const statsByClass = useMemo(() => {
     const map = new Map<string, { open: number; missing: number }>();
-    for (const c of classes) map.set(c.id, { open: 0, missing: 0 });
+    for (const c of visibleClasses) map.set(c.id, { open: 0, missing: 0 });
     for (const a of assignments) {
       if (!a.class_id) continue;
       const s = map.get(a.class_id);
@@ -39,7 +47,7 @@ export function ClassesPage() {
       if (a.is_missing) s.missing += 1;
     }
     return map;
-  }, [classes, assignments]);
+  }, [visibleClasses, assignments]);
 
   if (loading) {
     return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
@@ -50,14 +58,14 @@ export function ClassesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-display text-2xl font-bold text-slate-900">Classes</h1>
-          <p className="mt-1 text-sm text-slate-500">{classes.length} {classes.length === 1 ? 'class' : 'classes'} · track grades and goals</p>
+          <p className="mt-1 text-sm text-slate-500">{visibleClasses.length} {visibleClasses.length === 1 ? 'class' : 'classes'} · track grades and goals</p>
         </div>
         <Button onClick={() => { setEditing(null); setFormOpen(true); }}>
           <Plus className="h-4 w-4" /> Add class
         </Button>
       </div>
 
-      {classes.length === 0 ? (
+      {visibleClasses.length === 0 ? (
         <EmptyState
           icon={<BookOpen className="h-6 w-6" />}
           title="No classes yet"
@@ -66,7 +74,7 @@ export function ClassesPage() {
         />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          {classes.map((c) => {
+          {visibleClasses.map((c) => {
             const s = statsByClass.get(c.id) ?? { open: 0, missing: 0 };
             const gap = c.current_grade != null && c.goal_grade != null ? c.goal_grade - c.current_grade : null;
             return (
@@ -185,7 +193,7 @@ function ClassForm({ open, onClose, onSaved, existing }: { open: boolean; onClos
   );
 }
 
-function GradeCalculatorModal({ cls, onClose, onSaved }: { cls: Class; onClose: () => void; onSaved: () => void }) {
+function GradeCalculatorModal({ cls, onClose, onSaved: _onSaved }: { cls: Class; onClose: () => void; onSaved: () => void }) {
   const [score, setScore] = useState('90');
   const [weight, setWeight] = useState('20');
   const current = cls.current_grade ?? 0;
@@ -195,8 +203,7 @@ function GradeCalculatorModal({ cls, onClose, onSaved }: { cls: Class; onClose: 
   const delta = projected - current;
 
   return (
-    <Modal open onClose={onClose} title={`Grade calculator — ${cls.name}`}
-      footer={<Button onClick={onClose}>Done</Button>}>
+    <Modal open onClose={onClose} title={`Grade calculator — ${cls.name}`} footer={<Button onClick={onClose}>Done</Button>}>
       <p className="text-sm text-slate-600">Test what a future assignment would do to your grade. This is an estimate assuming the weight you enter.</p>
       <div className="mt-4 space-y-4">
         <Field label="Hypothetical score (%)"><Input type="number" value={score} onChange={(e) => setScore(e.target.value)} /></Field>
@@ -206,9 +213,7 @@ function GradeCalculatorModal({ cls, onClose, onSaved }: { cls: Class; onClose: 
           <div className="font-display text-2xl font-bold text-slate-900">{current.toFixed(1)}%</div>
           <div className="mt-3 text-xs text-slate-500">Projected grade</div>
           <div className="font-display text-2xl font-bold text-brand-600">{projected.toFixed(1)}%</div>
-          <div className={`mt-1 text-sm ${delta >= 0 ? 'text-brand-600' : 'text-rose-600'}`}>
-            {delta >= 0 ? '+' : ''}{delta.toFixed(1)} points
-          </div>
+          <div className={`mt-1 text-sm ${delta >= 0 ? 'text-brand-600' : 'text-rose-600'}`}>{delta >= 0 ? '+' : ''}{delta.toFixed(1)} points</div>
         </div>
       </div>
     </Modal>
