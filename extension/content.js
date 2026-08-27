@@ -39,10 +39,19 @@
     return !/^(home|materials|grades|calendar|members|more|view course|course dashboard|recent activity|to do)$/i.test(title);
   }
 
-  // Schoology's home page contains course links inside recent-activity posts.
-  // Those are NOT necessarily the student's active classes. The course dashboard
-  // is the authoritative class list, so collect it separately and do not merge
-  // arbitrary /course/ links from the home feed.
+  function cleanCourseTitle(title) {
+    return String(title || '')
+      .replace(/\s+/g, ' ')
+      .replace(/^\s*[•·|:-]+\s*/, '')
+      .replace(/\s+(materials|grades|calendar|members|more)\s*$/i, '')
+      .trim()
+      .slice(0, 300);
+  }
+
+  // Schoology's course dashboard is preferred, but some schools only render a
+  // subset of enrolled sections there. We also recover course identities from
+  // the actual upcoming assignment cards below. This avoids losing valid classes
+  // merely because Schoology's dashboard DOM is incomplete.
   function parseCourses(doc, baseUrl) {
     const out = new Map();
     const selectors = [
@@ -57,22 +66,20 @@
       const id = courseId(absolute(href)) || (dataId && /^\d+$/.test(dataId) ? dataId : null);
       if (!id) return;
 
-      // Prefer the visible course name, but strip common navigation text.
-      let title = text(el);
-      title = title.replace(/\s+(materials|grades|calendar|members|more)\s*$/i, '').trim();
+      let title = cleanCourseTitle(text(el));
       if (!looksLikeRealCourseTitle(title)) return;
 
       out.set(id, {
         schoologyId: id,
-        title: title.slice(0, 300),
+        title,
         url: absolute(href) || `${location.origin}/course/${id}`
       });
     });
 
     const currentId = courseId(baseUrl);
     if (currentId && !out.has(currentId)) {
-      const heading = text(doc.querySelector('h1, [role="heading"]')) || text(doc.querySelector('title')).replace(/\s*[|–-].*$/, '');
-      if (looksLikeRealCourseTitle(heading)) out.set(currentId, { schoologyId: currentId, title: heading.slice(0, 300), url: baseUrl });
+      const heading = cleanCourseTitle(text(doc.querySelector('h1, [role="heading"]')) || text(doc.querySelector('title')).replace(/\s*[|–-].*$/, ''));
+      if (looksLikeRealCourseTitle(heading)) out.set(currentId, { schoologyId: currentId, title: heading, url: baseUrl });
     }
     return [...out.values()];
   }
@@ -85,7 +92,6 @@
   function eventDate(anchor, pageMonth) {
     let node = anchor;
     for (let depth = 0; node && depth < 12; depth += 1, node = node.parentElement) {
-      // Schoology's upcoming cards use data-start and store a Unix timestamp.
       for (const attr of ['data-date', 'data-start', 'data-datetime', 'datetime', 'title']) {
         const value = node.getAttribute?.(attr);
         if (!value) continue;
@@ -118,13 +124,25 @@
       const dueAt = eventDate(a, pageMonth);
       const dueMs = dueAt ? Date.parse(dueAt) : NaN;
 
-      // Only import genuinely upcoming items. Schoology's To Do/Upcoming list
-      // already applies its own submission/completion rules.
       if (!dueAt || Number.isNaN(dueMs) || dueMs < now - 60 * 60 * 1000) return;
 
       let courseSchoologyId = '';
       const courseLink = event?.querySelector?.('a[href*="/course/"]');
       courseSchoologyId = courseId(absolute(courseLink?.getAttribute('href')) || '') || '';
+
+      // Recover the class directly from the assignment card when the course
+      // dashboard did not expose that class. This is especially important for
+      // schools where only some active sections appear in /home/course-dashboard.
+      if (courseSchoologyId && !coursesById.has(courseSchoologyId)) {
+        const rawCourseText = text(event?.querySelector?.('.realm-title-course, .realm-title-course-csl, [class*="course-title"]')) || '';
+        const fallbackTitle = cleanCourseTitle(rawCourseText.replace(/^.*?:\s*\d+\s*\d*\s*/i, ''));
+        const title = looksLikeRealCourseTitle(fallbackTitle) ? fallbackTitle : cleanCourseTitle(courseLink?.textContent || '');
+        coursesById.set(courseSchoologyId, {
+          schoologyId: courseSchoologyId,
+          title: looksLikeRealCourseTitle(title) ? title : `Schoology class ${courseSchoologyId}`,
+          url: absolute(courseLink?.getAttribute('href')) || `${location.origin}/course/${courseSchoologyId}`
+        });
+      }
 
       if (!courseSchoologyId) {
         const normalized = nearby.toLowerCase();
@@ -165,24 +183,18 @@
   async function collect() {
     const coursesById = new Map();
 
-    // IMPORTANT: do not scrape /home and /courses and merge every link found.
-    // Schoology's home feed contains historical/activity course links, which was
-    // the reason ClassPilot reported 17 classes instead of the student's active set.
     try {
       const dashboard = await fetchDoc('/home/course-dashboard');
       parseCourses(dashboard.doc, dashboard.url).forEach(course => coursesById.set(course.schoologyId, course));
     } catch (_) {}
 
-    // If the course dashboard is unavailable, use the current page only as a fallback.
     if (!coursesById.size) parseCourses(document, location.href).forEach(course => coursesById.set(course.schoologyId, course));
-
-    const courses = [...coursesById.values()];
-    if (!courses.length) throw new Error('No Schoology classes were found. Open your Schoology home page and try again.');
 
     const assignmentsById = new Map();
     const currentSeed = calendarUserAndMonth(location.href);
 
-    // The currently loaded Schoology home page has the most reliable To Do list.
+    // Parse the loaded Schoology page first. As assignment cards are processed,
+    // any course links they contain are added to coursesById before validation.
     parseCalendarAssignments(document, coursesById, currentSeed?.month || monthKey(new Date()))
       .forEach(item => assignmentsById.set(item.schoologyId, item));
 
@@ -217,16 +229,9 @@
       }
     }
 
-    // DO NOT fetch every assignment page and guess whether it is submitted.
-    // That previous heuristic looked for generic words such as "submission details",
-    // which appear on ordinary Schoology assignment pages and incorrectly removed
-    // almost every valid assignment. Schoology's Upcoming/To Do feed is already the
-    // correct source of truth for open assignments.
-    const upcoming = [...assignmentsById.values()];
-
     return {
-      courses,
-      assignments: upcoming,
+      courses: [...coursesById.values()],
+      assignments: [...assignmentsById.values()],
       schoolName: location.hostname,
       calendarSync: true,
       calendarMonthsFetched,
