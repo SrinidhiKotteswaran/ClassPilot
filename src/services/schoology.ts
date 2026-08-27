@@ -32,7 +32,15 @@ export async function disconnect(): Promise<void> {
 export async function importSchoologyPayload(payload: SchoologyImportPayload): Promise<{ classesImported: number; assignmentsImported: number; assignmentsUpdated: number }> {
   if (DEMO_MODE || !supabase) throw new Error('Supabase is not configured for this deployment.');
   const { data: { user } } = await supabase.auth.getUser(); if (!user) throw new Error('You must be signed in.');
-  if (!Array.isArray(payload.courses) || payload.courses.length === 0) throw new Error('The import file does not contain any classes.');
+
+  // Schoology exposes some navigation/section links as courses. A bare
+  // "Section 1" is not a real class in ClassPilot; named classes such as
+  // "Class of 2027: Section 1" remain valid because they contain real context.
+  const courses = (Array.isArray(payload.courses) ? payload.courses : []).filter((c) => {
+    const title = String(c?.title || '').replace(/\s+/g, ' ').trim();
+    return !/^section\s*\d+$/i.test(title);
+  });
+  if (courses.length === 0) throw new Error('The import did not contain any named classes.');
 
   const { data: existingConn } = await supabase.from('school_connections').select('id').eq('user_id', user.id).maybeSingle();
   let connectionId = existingConn?.id;
@@ -44,7 +52,7 @@ export async function importSchoologyPayload(payload: SchoologyImportPayload): P
   }
 
   const classIds = new Map<string,string>();
-  for (const c of payload.courses.slice(0,100)) {
+  for (const c of courses.slice(0,100)) {
     const sid = String(c.schoologyId); const name = String(c.title || 'Untitled class').slice(0,300);
     const { data: old } = await supabase.from('classes').select('id').eq('user_id',user.id).eq('schoology_course_id',sid).maybeSingle();
     if (old) { await supabase.from('classes').update({ name, teacher:c.teacher || null }).eq('id',old.id); classIds.set(sid,old.id); }
@@ -52,14 +60,14 @@ export async function importSchoologyPayload(payload: SchoologyImportPayload): P
   }
 
   let assignmentsImported = 0, assignmentsUpdated = 0;
-  for (const a of payload.assignments.slice(0,1000)) {
+  for (const a of (Array.isArray(payload.assignments) ? payload.assignments : []).slice(0,1000)) {
     const classId = classIds.get(String(a.courseSchoologyId)); if (!classId || !a.schoologyId) continue;
     const record = { user_id:user.id, class_id:classId, title:String(a.title || 'Untitled assignment').slice(0,500), description:a.description || null, category:a.category || 'preparatory', due_date:a.dueAt || null, points_value:Number(a.pointsValue || 0), source:'schoology', schoology_assignment_id:String(a.schoologyId), is_missing:Boolean(a.isMissing) };
     const { data: old } = await supabase.from('assignments').select('id').eq('user_id',user.id).eq('schoology_assignment_id',String(a.schoologyId)).maybeSingle();
     if (old) { const { error } = await supabase.from('assignments').update(record).eq('id',old.id); if (error) throw error; assignmentsUpdated++; }
     else { const { error } = await supabase.from('assignments').insert(record); if (error) throw error; assignmentsImported++; }
   }
-  return { classesImported:payload.courses.length, assignmentsImported, assignmentsUpdated };
+  return { classesImported:courses.length, assignmentsImported, assignmentsUpdated };
 }
 
 export function mapSchoologyCategory(raw: string | null | undefined): Category {
