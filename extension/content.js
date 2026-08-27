@@ -110,8 +110,7 @@
       }
     }
     const body=text(doc.body);
-    const match=body.match(/(?:^|\s)Category\s*:\s*([^\
-]+?)(?=\s+(?:Period|Due|Grade)\s*:|$)/i);
+    const match=body.match(/(?:^|\s)Category\s*:\s*([^\n]+?)(?=\s+(?:Period|Due|Grade)\s*:|$)/i);
     return normalizeCategory(match?.[1]||'');
   }
   async function enrichAssignmentCategories(assignments){
