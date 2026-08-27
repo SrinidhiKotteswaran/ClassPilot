@@ -89,7 +89,38 @@
     });
     return [...out.values()];
   }
-  async function fetchDoc(path){
+
+  function normalizeCategory(value){
+    const v=String(value||'').replace(/\\s+/g,' ').trim().toLowerCase();
+    if(!v) return null;
+    if(/summative/.test(v)) return 'summative';
+    if(/formative/.test(v)) return 'formative';
+    if(/review|reflect/.test(v)) return 'review_reflect';
+    if(/prepar/.test(v)) return 'preparatory';
+    return v.slice(0,100);
+  }
+  function categoryFromAssignmentDoc(doc){
+    const labels=[...doc.querySelectorAll('dt,th,strong,b,label,span,div,p')];
+    for(const el of labels){
+      const label=text(el).replace(/\\s+/g,' ').trim();
+      if(/^Category\\s*:/i.test(label)){
+        const own=label.replace(/^Category\\s*:\\s*/i,'');
+        const next=text(el.nextElementSibling);
+        return normalizeCategory(own||next);
+      }
+    }
+    const body=text(doc.body);
+    const match=body.match(/(?:^|\\s)Category\\s*:\\s*([^\\n]+?)(?=\\s+(?:Period|Due|Grade)\\s*:|$)/i);
+    return normalizeCategory(match?.[1]||'');
+  }
+  async function enrichAssignmentCategories(assignments){
+    const entries=[...assignments];
+    const concurrency=4; let cursor=0;
+    async function worker(){ while(cursor<entries.length){ const item=entries[cursor++]; try{ const result=await fetchDoc(item.url); const category=categoryFromAssignmentDoc(result.doc); if(category) item.category=category; }catch(_){} } }
+    await Promise.all(Array.from({length:Math.min(concurrency,entries.length)},worker));
+    return entries;
+  }
+\n  async function fetchDoc(path){
     const url=absolute(path); if(!url) throw new Error('Invalid Schoology URL.');
     const response=await fetch(url,{credentials:'include',headers:{Accept:'text/html'}}); if(!response.ok) throw new Error(`Schoology returned ${response.status}`);
     return {doc:new DOMParser().parseFromString(await response.text(),'text/html'),url:response.url||url};
@@ -118,7 +149,7 @@
       const m=href.match(/\/calendar\/(\d+)\/(\d{4})-(\d{2})/i);
       if(m){const userId=m[1],start=new Date(Number(m[2]),Number(m[3])-1,1);for(let offset=0;offset<3;offset++){const d=new Date(start.getFullYear(),start.getMonth()+offset,1),key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;try{const result=offset===0&&/\/calendar\/\d+\/\d{4}-\d{2}/i.test(location.pathname)?{doc:document}:await fetchDoc(`/calendar/${userId}/${key}`);parseAssignmentLinks(result.doc,coursesById).forEach(x=>assignmentsById.set(x.schoologyId,x));}catch(_){} }}
     }catch(_){}
-    return {courses:[...coursesById.values()],assignments:[...assignmentsById.values()],schoolName:location.hostname,calendarSync:true};
+    const assignments=await enrichAssignmentCategories([...assignmentsById.values()]);\n    return {courses:[...coursesById.values()],assignments,schoolName:location.hostname,calendarSync:true};
   }
   let syncInFlight=null;
   async function sync(){
