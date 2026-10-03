@@ -1,62 +1,81 @@
 # ClassPilot
 
-ClassPilot is a student-focused academic command center for organizing classes, assignments, grades, commitments, and daily study priorities in one place.
+ClassPilot is a student-focused academic command center I built to answer one practical question: **what should I work on next?**
 
-**Live app:** https://class-pilot-sigma.vercel.app/
+**[Live app →](https://class-pilot-sigma.vercel.app/)**
 
 ## What it does
 
-- Dashboard with upcoming work and academic progress
-- Class management with current/goal grades
-- Assignment tracking with completion, due dates, workload, and priorities
-- Weekly commitments and schedule planning
-- Grade calculator for hypothetical scores
-- Daily study-plan generation based on assignment priority and available time
-- Demo mode that works without backend credentials and persists changes locally
-- Supabase-ready authentication and persistent cloud data when environment variables are configured
+- Organizes classes, assignments, grades, and commitments in one dashboard
+- Tracks assignment due dates, workload, completion, and priority
+- Calculates hypothetical grades and category-weighted outcomes
+- Generates daily study plans from available time and assignment priority
+- Supports authentication and persistent Supabase/Postgres data when configured
+- Includes a demo mode so the interface can be explored without backend credentials
 
 ## Tech stack
 
-- React + TypeScript
+- React
+- TypeScript
 - Vite
 - Tailwind CSS
-- Supabase Auth + Postgres
+- Supabase Auth
+- PostgreSQL
 - Vercel
 
-## Run locally
+## Architecture
+
+The application is organized around a small set of focused layers:
+
+```text
+src/
+  components/   application UI, forms, authentication, and reusable controls
+  context/      authentication and application data state
+  lib/          planning, priority, formatting, categories, and Supabase helpers
+supabase/
+  migrations/  database schema and migrations
+  functions/   backend functions and integrations
+extension/      browser-extension experiments for Schoology workflows
+```
+
+The core design separates UI components from application state and the utility logic that handles planning, priorities, formatting, and data access.
+
+## Local development
 
 ```bash
 npm install
 npm run dev
 ```
 
-The app can run in demo mode without Supabase credentials. To enable cloud authentication and database persistence, add the Vite Supabase environment variables used by `src/lib/supabase.ts`.
+For a production-style check:
 
-## Production
-
-The `main` branch is connected to Vercel, so every push to `main` creates a new production deployment.
-
-## Project structure
-
-```text
-src/
-  components/   reusable UI and authentication screens
-  context/      auth and application data state
-  lib/          planning, priority, formatting, and Supabase helpers
-  pages/        dashboard, assignments, classes, schedule, settings
-  services/     Supabase/data access layer
-supabase/
-  migrations/   database schema
-  functions/    Schoology sync edge function
+```bash
+npm run lint
+npm run typecheck
+npm run build
 ```
 
-## Roadmap
+The app can run in demo mode without Supabase credentials. To enable cloud authentication and persistence, configure the Vite Supabase environment variables consumed by `src/lib/supabase.ts`.
 
-- Connect a Supabase production project
-- Add secure row-level security policies and production auth
-- Add Schoology sync configuration
-- Expand study-plan recommendations
-- Add automated end-to-end browser tests
-- Improve mobile UX and accessibility
+## Development notes
 
-<!-- Project documentation note -->
+ClassPilot grew out of a simple idea: school systems often expose information without helping students decide what to do with it. I built the project around turning assignments, grades, deadlines, and available time into actionable priorities.
+
+The project is intentionally more than a static UI: it includes application state, authentication, persistent data, planning logic, and a browser-extension experiment for bringing Schoology information into the workflow.
+
+## Current status
+
+ClassPilot is an active personal software project. The main application is deployed through Vercel, while Supabase-backed features depend on the configured environment and database setup.
+
+Planned areas include:
+
+- More robust Schoology synchronization
+- Expanded study-plan recommendations
+- Stronger automated end-to-end testing
+- Continued mobile and accessibility refinement
+
+## Author
+
+**Srinidhi Kotteswaran**
+
+[GitHub profile →](https://github.com/SrinidhiKotteswaran)
