@@ -5,5 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 const SUPABASE_URL = 'https://ixolapnghbfpmspdpesn.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml4b2xhcG5naGJmcG1zcGRwZXNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1OTMwNTIsImV4cCI6MjEwMzE2OTA1Mn0.yXfAIjKeSgKFY32thJ8wt7D_4EnI5BlrCnfuErwfbis';
 
-export const DEMO_MODE = false;
+// Keep the public portfolio app usable while the hosted Supabase project is unavailable.
+// Demo data is stored only in this browser; set this to false once cloud auth is healthy.
+export const DEMO_MODE = true;
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
