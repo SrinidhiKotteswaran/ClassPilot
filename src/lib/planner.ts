@@ -10,15 +10,36 @@ export function availableMinutesToday(commitments: Commitment[]): number {
   const dow = new Date().getDay();
   const wakeStart = 7 * 60;
   const wakeEnd = 22 * 60;
-  let committed = 0;
+  const intervals: Array<[number, number]> = [];
   for (const c of commitments) {
     if (c.day_of_week !== dow) continue;
     const [sh, sm] = c.start_time.split(':').map(Number);
     const [eh, em] = c.end_time.split(':').map(Number);
+    if (![sh, sm, eh, em].every(Number.isFinite)) continue;
     const start = Math.max(wakeStart, sh * 60 + sm);
     const end = Math.min(wakeEnd, eh * 60 + em);
-    if (end > start) committed += end - start;
+    if (end > start) intervals.push([start, end]);
   }
+
+  // Merge overlapping commitments so the same minutes are never subtracted twice.
+  intervals.sort((a, b) => a[0] - b[0]);
+  let committed = 0;
+  let activeStart: number | null = null;
+  let activeEnd = 0;
+  for (const [start, end] of intervals) {
+    if (activeStart === null) {
+      activeStart = start;
+      activeEnd = end;
+    } else if (start <= activeEnd) {
+      activeEnd = Math.max(activeEnd, end);
+    } else {
+      committed += activeEnd - activeStart;
+      activeStart = start;
+      activeEnd = end;
+    }
+  }
+  if (activeStart !== null) committed += activeEnd - activeStart;
+
   const free = wakeEnd - wakeStart - committed;
   // Reserve ~40% for meals, breaks, downtime.
   return Math.max(0, Math.round(free * 0.6));
