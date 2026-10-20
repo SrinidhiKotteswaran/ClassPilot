@@ -16,9 +16,9 @@ ClassPilot brings assignments, grades, classes, commitments, and study prioritie
 - **Study planning:** generate a suggested plan based on assignments and available time
 - **Demo mode:** explore the interface without creating an account or connecting a backend
 
-## Screenshots
+## Demo data
 
-The repository's screenshots and the live demo are the best way to inspect the current interface. The public demo uses sample data; changes made in demo mode are stored in the current browser rather than a personal cloud account.
+The public demo uses sample data; changes made in demo mode are stored in the current browser rather than a personal cloud account. No screenshots are included in this repository yet.
 
 ## How it works
 
@@ -50,7 +50,7 @@ Open the local URL printed by Vite.
 
 The current public configuration sets `DEMO_MODE = true`. In this mode, the app uses sample data and browser-local persistence, so it can be explored without a working Supabase project.
 
-The repository also contains Supabase authentication and data-access integration. **Cloud authentication and persistent cloud data are not active in the current demo configuration.** Before enabling them for real users, configure the environment for the target deployment and verify database schema, access policies, and authentication flows. Do not put a Supabase service-role key or other server secret in client-side code.
+The repository also contains Supabase authentication, data-access integration, migrations, an Edge Function, and an experimental Schoology browser extension. **Cloud authentication and persistent cloud data are not active in the current demo configuration.** The extension's cloud sync therefore requires additional backend configuration and end-to-end verification; it is not part of the currently dependable demo flow. Before enabling cloud features for real users, verify the database schema, row-level security policies, Edge Function authorization, and authentication flows. Never put a Supabase service-role key or other server secret in client-side code.
 
 ## Project structure
 
@@ -66,6 +66,10 @@ supabase/
   functions/    edge-function code
 extension/      browser extension project files
 ```
+
+## Schoology extension
+
+The `extension/` directory contains a Manifest V3 Chrome extension prototype for importing Schoology classes and assignments. It requires a configured ClassPilot cloud session and a deployed, authorized Supabase Edge Function; it will not provide cloud sync while the app is running in demo mode. Load the `extension/` folder as an unpacked extension in Chrome for development, and only connect it to accounts and environments you control.
 
 ## Quality checks
 
