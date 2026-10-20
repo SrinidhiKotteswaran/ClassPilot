@@ -64,10 +64,13 @@ async function verifyAndStoreSession(session) {
 }
 
 async function connectToClassPilot() {
+  const accountUrl = `${CLASS_PILOT_URL}?mode=account`;
   const tabs = await chrome.tabs.query({ url: [`${CLASS_PILOT_URL}*`] });
   let tab = tabs[0];
-  if (!tab?.id) tab = await chrome.tabs.create({ url: CLASS_PILOT_URL, active: true });
-  else await chrome.tabs.update(tab.id, { active: true });
+  if (!tab?.id) tab = await chrome.tabs.create({ url: accountUrl, active: true });
+  else if (!new URL(tab.url || CLASS_PILOT_URL).searchParams.has('mode') || new URL(tab.url || CLASS_PILOT_URL).searchParams.get('mode') !== 'account') {
+    tab = await chrome.tabs.update(tab.id, { url: accountUrl, active: true });
+  } else await chrome.tabs.update(tab.id, { active: true });
   if (!tab?.id) return { ok: false, message: 'Could not open ClassPilot.' };
   let lastReason = 'No active ClassPilot Supabase session was found.';
   for (let attempt = 0; attempt < 30; attempt += 1) {
