@@ -7,26 +7,34 @@ const cors = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
   const auth = req.headers.get("Authorization");
   if (!auth?.startsWith("Bearer ")) return json({ error: "Missing authorization" }, 401);
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!supabaseUrl || !serviceRole || !anonKey) {
+    return json({ error: "Schoology sync service is not configured." }, 503);
+  }
   const admin = createClient(supabaseUrl, serviceRole);
   const token = auth.replace("Bearer ", "");
   const userClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: auth } } });
   const { data: userData, error: userError } = await userClient.auth.getUser(token);
   if (userError || !userData.user) return json({ error: "Invalid session" }, 401);
   const userId = userData.user.id;
-  let body: any = {};
+  let body: unknown;
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
-  if (body?.source !== "extension" || !body?.payload) return json({ error: "Use the ClassPilot browser extension while signed into Schoology." }, 400);
+  if (!isRecord(body) || body.source !== "extension" || !isRecord(body.payload)) {
+    return json({ error: "Use the ClassPilot browser extension while signed into Schoology." }, 400);
+  }
   const payload = body.payload;
-  const courses = Array.isArray(payload.courses) ? payload.courses.slice(0, 100) : [];
-  const assignments = Array.isArray(payload.assignments) ? payload.assignments.slice(0, 1000) : [];
+  const courses = Array.isArray(payload.courses) ? payload.courses.filter(isRecord).slice(0, 100) : [];
+  const assignments = Array.isArray(payload.assignments) ? payload.assignments.filter(isRecord).slice(0, 1000) : [];
   if (!courses.length) return json({ error: "No Schoology courses were provided." }, 400);
   try {
     const now = () => new Date().toISOString();
@@ -41,7 +49,7 @@ Deno.serve(async (req: Request) => {
     for (const course of courses) {
       const externalId = String(course.schoologyId ?? "").trim(); if (!externalId) continue;
       const name = String(course.title ?? `Schoology class ${externalId}`).slice(0, 300); const teacher = String(course.teacher ?? course.teacherName ?? "").slice(0, 255);
-      const { data: courseRow, error: courseError } = await admin.from("schoology_courses").upsert({ connection_id: rawConnection.id, schoology_id: externalId, title: name, course_code: course.courseCode ?? null, teacher_name: teacher || null, raw_data: course, updated_at: now() }, { onConflict: "connection_id,schoology_id" }).select("id").single();
+      const { data: courseRow, error: courseError } = await admin.from("schoology_courses").upsert({ connection_id: rawConnection.id, schoology_id: externalId, title: name, course_code: String(course.courseCode ?? '').slice(0, 100) || null, teacher_name: teacher || null, raw_data: course, updated_at: now() }, { onConflict: "connection_id,schoology_id" }).select("id").single();
       if (courseError || !courseRow) throw courseError ?? new Error(`Could not save ${name}.`);
       const { data: appClass, error: classError } = await admin.from("classes").upsert({ user_id: userId, name, teacher, color: "blue", schoology_course_id: externalId, schoology_section_id: externalId }, { onConflict: "user_id,schoology_course_id" }).select("id").single();
       if (classError || !appClass) throw classError ?? new Error(`Could not save class ${name}.`);
@@ -52,7 +60,7 @@ Deno.serve(async (req: Request) => {
       const externalId = String(item.schoologyId ?? "").trim(); if (!externalId) continue;
       const courseId = String(item.courseSchoologyId ?? ""); const classId = classMap.get(courseId) ?? null;
       const { data: courseRow } = await admin.from("schoology_courses").select("id").eq("connection_id", rawConnection.id).eq("schoology_id", courseId).maybeSingle();
-      const due = item.dueAt ? new Date(item.dueAt) : null; const dueAt = due && !Number.isNaN(due.getTime()) ? due.toISOString() : null;
+      const due = item.dueAt ? new Date(String(item.dueAt)) : null; const dueAt = due && !Number.isNaN(due.getTime()) ? due.toISOString() : null;
       const title = String(item.title ?? `Schoology assignment ${externalId}`).slice(0, 500); const description = String(item.description ?? "").slice(0, 2000); const category = String(item.category ?? "preparatory"); const points = Number(item.pointsValue ?? 0) || 0; const missing = Boolean(item.isMissing);
       if (courseRow) { const { error } = await admin.from("schoology_assignments").upsert({ connection_id: rawConnection.id, course_id: courseRow.id, schoology_id: externalId, title, description, due_at: dueAt, category, grade: null, max_grade: points, status: missing ? "missing" : "assigned", raw_data: item, updated_at: now() }, { onConflict: "connection_id,schoology_id" }); if (error) throw error; }
       const { data: existing } = await admin.from("assignments").select("id").eq("user_id", userId).eq("schoology_assignment_id", externalId).maybeSingle();
