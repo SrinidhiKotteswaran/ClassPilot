@@ -1,6 +1,6 @@
 import type { Assignment, Class } from '@/types';
 import { CATEGORIES } from '@/lib/categories';
-import { daysUntil, isOverdue } from '@/lib/format';
+import { daysUntil } from '@/lib/format';
 
 export interface ScoredAssignment {
   assignment: Assignment;
