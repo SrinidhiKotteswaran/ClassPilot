@@ -1,8 +1,8 @@
 {
-  "name": "vite-react-typescript-starter",
+  "name": "classpilot",
   "private": true,
-  "version": "0.0.0",
-  "description": "Student-focused academic command center",
+  "version": "1.0.0",
+  "description": "A student-focused academic planner that turns assignments and commitments into actionable study plans.",
   "type": "module",
   "scripts": {
     "dev": "vite",
