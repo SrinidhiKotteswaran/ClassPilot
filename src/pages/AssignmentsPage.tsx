@@ -8,7 +8,7 @@ import { Input, Select } from '@/components/ui/Field';
 import { EmptyState, Spinner } from '@/components/ui/Feedback';
 import { AssignmentItem } from '@/components/assignments/AssignmentItem';
 import { AssignmentForm } from '@/components/assignments/AssignmentForm';
-import { CATEGORIES, CATEGORY_LIST } from '@/lib/categories';
+import { CATEGORY_LIST } from '@/lib/categories';
 import { rankAssignments } from '@/lib/priority';
 import * as data from '@/services/data';
 
