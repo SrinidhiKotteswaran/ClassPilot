@@ -94,6 +94,7 @@ export function AuthScreen() {
           {mode === 'signup' && canResend && <button type="button" onClick={resend} disabled={busy} className="w-full text-sm font-medium text-brand-600 hover:text-brand-700 disabled:opacity-50">Resend confirmation email</button>}
         </form>
         <p className="mt-6 text-center text-sm text-slate-500">{mode === 'signin' ? "Don't have an account?" : 'Already have an account?'}{' '}<button type="button" onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); setSuccess(null); setCanResend(false); }} className="font-medium text-brand-600 hover:text-brand-700">{mode === 'signin' ? 'Sign up' : 'Sign in'}</button></p>
+        <p className="mt-4 text-center text-sm"><a href="/" className="font-medium text-brand-600 hover:text-brand-700">Back to the public demo</a></p>
       </div></div>
     </div>
   );
