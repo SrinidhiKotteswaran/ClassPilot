@@ -9,13 +9,15 @@ export interface ScoredAssignment {
 }
 
 function isActuallyOverdue(a: Assignment): boolean {
-  if (isOverdue(a.due_date)) return true;
-  // A Schoology "missing" flag should only make work overdue once its due
-  // date has passed. This prevents future assignments from being labeled or
-  // recommended as overdue because of stale metadata.
+  // Assignment due dates are calendar deadlines: an item due today is "Due today"
+  // for the whole day, not overdue merely because its timestamp parses to midnight.
+  const days = daysUntil(a.due_date);
+  if (days !== null && days < 0) return true;
+
+  // A Schoology "missing" flag should not make future work overdue because of
+  // stale metadata. A missing item with no due date still deserves attention.
   if (!a.is_missing) return false;
-  if (!a.due_date) return true;
-  return new Date(a.due_date).getTime() <= Date.now();
+  return !a.due_date;
 }
 
 export function scoreAssignment(a: Assignment, cls: Class | undefined): ScoredAssignment {
@@ -68,7 +70,7 @@ export function rankAssignments(assignments: Assignment[], classes: Class[]): Sc
 }
 
 export function priorityLabel(_score: number, assignment?: Assignment): { label: string; className: string } {
-  if (!assignment?.due_date) return { label: '', className: '' };
+  if (!assignment || assignment.completed) return { label: '', className: '' };
 
   if (isActuallyOverdue(assignment)) {
     return { label: 'Overdue', className: 'bg-rose-50 text-rose-700 ring-1 ring-rose-100' };
