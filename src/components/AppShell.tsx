@@ -12,6 +12,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { DEMO_MODE } from '@/lib/supabase';
 
 export type Route = 'dashboard' | 'upcoming' | 'classes' | 'assignments' | 'schedule' | 'settings';
 
@@ -61,7 +62,10 @@ export function AppShell({ route, onNavigate, children }: { route: Route; onNavi
             <button onClick={signOut} className="text-slate-400 hover:text-slate-600"><LogOut className="h-5 w-5" /></button>
           </div>
         </header>
-        <main className="flex-1 px-4 pb-24 pt-6 sm:px-6 lg:px-10 lg:pb-10"><div className="mx-auto max-w-5xl animate-fade-in">{children}</div></main>
+        <main className="flex-1 px-4 pb-24 pt-6 sm:px-6 lg:px-10 lg:pb-10"><div className="mx-auto max-w-5xl animate-fade-in">
+          {DEMO_MODE && <div className="mb-5 flex flex-col gap-2 rounded-xl border border-brand-100 bg-brand-50 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold text-brand-900">Exploring the ClassPilot demo</p><p className="text-brand-700">Use your own account to connect Schoology and sync your assignments.</p></div><a href="/?mode=account" className="inline-flex w-fit items-center rounded-lg bg-brand-700 px-3 py-2 font-semibold text-white hover:bg-brand-800">Sign in to sync Schoology</a></div>}
+          {children}
+        </div></main>
         <nav className="fixed bottom-0 left-0 right-0 z-30 flex border-t border-slate-200 bg-white lg:hidden">
           {NAV.map(({ route: r, label, icon: Icon }) => (
             <button key={r} onClick={() => onNavigate(r)} className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-medium ${route === r ? 'text-brand-600' : 'text-slate-500'}`}><Icon className="h-5 w-5" />{label}</button>
