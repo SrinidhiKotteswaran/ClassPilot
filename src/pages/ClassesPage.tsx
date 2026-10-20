@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, BookOpen, Target, Trash2, Calculator } from 'lucide-react';
 import type { Class } from '@/types';
 import { useData } from '@/context/DataContext';
@@ -132,7 +132,7 @@ export function ClassesPage() {
       )}
 
       <ClassForm open={formOpen} onClose={() => setFormOpen(false)} onSaved={reload} existing={editing} />
-      {calcClass && <GradeCalculatorModal cls={calcClass} onClose={() => setCalcClass(null)} onSaved={reload} />}
+      {calcClass && <GradeCalculatorModal cls={calcClass} onClose={() => setCalcClass(null)} />}
     </div>
   );
 }
@@ -145,6 +145,16 @@ function ClassForm({ open, onClose, onSaved, existing }: { open: boolean; onClos
   const [goalGrade, setGoalGrade] = useState(existing?.goal_grade?.toString() ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setName(existing?.name ?? '');
+    setTeacher(existing?.teacher ?? '');
+    setColor(existing?.color ?? 'blue');
+    setCurrentGrade(existing?.current_grade?.toString() ?? '');
+    setGoalGrade(existing?.goal_grade?.toString() ?? '');
+    setError(null);
+  }, [open, existing]);
 
   async function save() {
     if (!name.trim()) { setError('Please enter a class name.'); return; }
@@ -193,7 +203,7 @@ function ClassForm({ open, onClose, onSaved, existing }: { open: boolean; onClos
   );
 }
 
-function GradeCalculatorModal({ cls, onClose, onSaved: _onSaved }: { cls: Class; onClose: () => void; onSaved: () => void }) {
+function GradeCalculatorModal({ cls, onClose }: { cls: Class; onClose: () => void }) {
   const [score, setScore] = useState('90');
   const [weight, setWeight] = useState('20');
   const current = cls.current_grade ?? 0;
