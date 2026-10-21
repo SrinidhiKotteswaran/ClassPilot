@@ -131,6 +131,7 @@ async function fetchDoc(path){
       .replace(/\s+/g, ' ')
       .replace(/^\s*\d+[A-Z]?\s+\d+\s+/, '')
       .replace(/\s*Course\s*$/i, '')
+      .replace(/:\s*period\s*\d+$/i, '')
       .replace(/\s+/g, ' ')
       .trim()
       .toLowerCase();
