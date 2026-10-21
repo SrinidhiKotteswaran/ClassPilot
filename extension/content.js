@@ -126,6 +126,32 @@ async function fetchDoc(path){
     const response=await fetch(url,{credentials:'include',headers:{Accept:'text/html'}}); if(!response.ok) throw new Error(`Schoology returned ${response.status}`);
     return {doc:new DOMParser().parseFromString(await response.text(),'text/html'),url:response.url||url};
   }
+  function parseCourseGrades(doc) {
+    const lines = String(doc?.body?.innerText || doc?.body?.textContent || '')
+      .split(/\r?\n/)
+      .map(line => line.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    const grades = new Map();
+    let activeCourseId = null;
+    for (const line of lines) {
+      // The Schoology Grade Report headings look like:
+      // "AP Calculus BC: 436 1 AP Calculus BC Course"
+      const heading = line.match(/^.+?:\s*(\d+)\s+\d+\s+.+?\s*Course$/i);
+      if (heading) {
+        activeCourseId = heading[1];
+        continue;
+      }
+      const grade = line.match(/^Course Grade:\s*(\d+(?:\.\d+)?)\s*%?$/i);
+      if (grade && activeCourseId) {
+        const value = Number(grade[1]);
+        if (Number.isFinite(value) && value >= 0 && value <= 100) grades.set(activeCourseId, value);
+      }
+      // Schoology can include headings with the course name and ID on separate
+      // visual lines. Don't let unrelated course text overwrite a known grade.
+    }
+    return grades;
+  }
+
   async function collect(){
     const coursesById=new Map(),assignmentsById=new Map();
     await new Promise(resolve=>setTimeout(resolve,1200));
@@ -150,8 +176,19 @@ async function fetchDoc(path){
       const m=href.match(/\/calendar\/(\d+)\/(\d{4})-(\d{2})/i);
       if(m){const userId=m[1],start=new Date(Number(m[2]),Number(m[3])-1,1);for(let offset=0;offset<3;offset++){const d=new Date(start.getFullYear(),start.getMonth()+offset,1),key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;try{const result=offset===0&&/\/calendar\/\d+\/\d{4}-\d{2}/i.test(location.pathname)?{doc:document}:await fetchDoc(`/calendar/${userId}/${key}`);parseAssignmentLinks(result.doc,coursesById).forEach(x=>assignmentsById.set(x.schoologyId,x));}catch(_){} }}
     }catch(_){}
+    // The Schoology Grade Report contains the authoritative overall "Course Grade"
+    // for each class. Fetch it separately from the upcoming-assignment calendar.
+    let courseGrades = new Map();
+    try {
+      const gradeReport = await fetchDoc('/grades');
+      courseGrades = parseCourseGrades(gradeReport.doc);
+    } catch (_) {}
+    const courses = [...coursesById.values()].map(course => ({
+      ...course,
+      ...(courseGrades.has(String(course.schoologyId)) ? { currentGrade: courseGrades.get(String(course.schoologyId)) } : {}),
+    }));
     const assignments=await enrichAssignmentCategories([...assignmentsById.values()]);
-return {courses:[...coursesById.values()],assignments,schoolName:location.hostname,calendarSync:true};
+return {courses,assignments,schoolName:location.hostname,calendarSync:true};
   }
   let syncInFlight=null;
   async function sync(){

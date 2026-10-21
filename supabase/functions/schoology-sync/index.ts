@@ -51,7 +51,14 @@ Deno.serve(async (req: Request) => {
       const name = String(course.title ?? `Schoology class ${externalId}`).slice(0, 300); const teacher = String(course.teacher ?? course.teacherName ?? "").slice(0, 255);
       const { data: courseRow, error: courseError } = await admin.from("schoology_courses").upsert({ connection_id: rawConnection.id, schoology_id: externalId, title: name, course_code: String(course.courseCode ?? '').slice(0, 100) || null, teacher_name: teacher || null, raw_data: course, updated_at: now() }, { onConflict: "connection_id,schoology_id" }).select("id").single();
       if (courseError || !courseRow) throw courseError ?? new Error(`Could not save ${name}.`);
-      const { data: appClass, error: classError } = await admin.from("classes").upsert({ user_id: userId, name, teacher, color: "blue", schoology_course_id: externalId, schoology_section_id: externalId }, { onConflict: "user_id,schoology_course_id" }).select("id").single();
+      const courseGrade = Number(course.currentGrade);
+      const classPayload: Record<string, unknown> = { user_id: userId, name, teacher, color: "blue", schoology_course_id: externalId, schoology_section_id: externalId };
+      // Only overwrite the saved grade when Schoology supplied a valid grade.
+      // Missing grade-report entries must not erase a manually entered grade.
+      if (course.currentGrade !== null && course.currentGrade !== undefined && Number.isFinite(courseGrade) && courseGrade >= 0 && courseGrade <= 100) {
+        classPayload.current_grade = courseGrade;
+      }
+      const { data: appClass, error: classError } = await admin.from("classes").upsert(classPayload, { onConflict: "user_id,schoology_course_id" }).select("id").single();
       if (classError || !appClass) throw classError ?? new Error(`Could not save class ${name}.`);
       classMap.set(externalId, appClass.id); classesImported++;
     }
