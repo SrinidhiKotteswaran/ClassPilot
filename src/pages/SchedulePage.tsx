@@ -8,8 +8,6 @@ import { Field, Input, Select } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { Spinner, EmptyState } from '@/components/ui/Feedback';
 import { DAY_NAMES, formatTime } from '@/lib/format';
-import { availableMinutesToday } from '@/lib/planner';
-import { formatMinutes } from '@/lib/format';
 import * as data from '@/services/data';
 
 const KINDS: { value: CommitmentKind; label: string }[] = [
@@ -39,8 +37,6 @@ export function SchedulePage() {
     return map;
   }, [commitments]);
 
-  const freeToday = useMemo(() => availableMinutesToday(commitments), [commitments]);
-
   if (loading) {
     return <div className="flex justify-center py-24"><Spinner className="h-8 w-8" /></div>;
   }
@@ -51,7 +47,7 @@ export function SchedulePage() {
         <div>
           <h1 className="font-display text-2xl font-bold text-slate-900">Your schedule</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Add recurring commitments so your daily plan fits real life. About {formatMinutes(freeToday)} free today.
+            Add recurring commitments so your daily plan fits real life.
           </p>
         </div>
         <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Add commitment</Button>
@@ -113,6 +109,7 @@ function CommitmentForm({ open, onClose, onSaved }: { open: boolean; onClose: ()
 
   async function save() {
     if (!title.trim()) { setError('Please enter a title.'); return; }
+    if (end <= start) { setError('End time must be later than start time.'); return; }
     setBusy(true);
     setError(null);
     try {
@@ -121,7 +118,10 @@ function CommitmentForm({ open, onClose, onSaved }: { open: boolean; onClose: ()
       onClose();
       setTitle('');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save.');
+      const message = e && typeof e === 'object' && 'message' in e && typeof e.message === 'string'
+        ? e.message
+        : typeof e === 'string' ? e : 'Could not save commitment. Please try again.';
+      setError(message);
     } finally {
       setBusy(false);
     }
