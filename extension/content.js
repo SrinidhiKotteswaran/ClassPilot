@@ -131,6 +131,7 @@ async function fetchDoc(path){
       .replace(/\s+/g, ' ')
       .replace(/^\s*\d+[A-Z]?\s+\d+\s+/, '')
       .replace(/\s*Course\s*$/i, '')
+      .replace(/:\s*period\s*\d+$/i, '')
       .replace(/\s+/g, ' ')
       .trim()
       .toLowerCase();
@@ -199,7 +200,12 @@ async function fetchDoc(path){
       courseGrades = parseCourseGrades(gradeReport.doc);
     } catch (_) {}
     const courses = [...coursesById.values()].map(course => {
-      const grade = courseGrades.get(normalizeGradeCourseName(course.title));
+      const courseName = normalizeGradeCourseName(course.title);
+      let grade = courseGrades.get(courseName);
+      if (grade === undefined) {
+        const sectionGrade = [...courseGrades.entries()].find(([reportName]) => reportName.startsWith(courseName + ': period'));
+        if (sectionGrade) grade = sectionGrade[1];
+      }
       return { ...course, ...(grade !== undefined ? { currentGrade: grade } : {}) };
     });
     const assignments=await enrichAssignmentCategories([...assignmentsById.values()]);
