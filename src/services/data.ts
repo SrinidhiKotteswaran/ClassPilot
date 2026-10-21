@@ -106,7 +106,17 @@ export async function createCommitment(input: Partial<Commitment>): Promise<Comm
     write(STORAGE_KEYS.commitments, [...await listCommitments(), item]);
     return item;
   }
-  const { data, error } = await supabase.from('commitments').insert(input).select().single();
+  // Set the owner explicitly rather than relying on the database column default.
+  // This also gives a clear error if the session expired before the user saved.
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  if (authError) throw authError;
+  if (!authData.user) throw new Error('Your session has expired. Please sign in again and retry.');
+
+  const { data, error } = await supabase
+    .from('commitments')
+    .insert({ ...input, user_id: authData.user.id })
+    .select()
+    .single();
   if (error) throw error;
   return data;
 }
